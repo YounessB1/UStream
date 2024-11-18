@@ -1,6 +1,6 @@
 use eframe::egui;
 use crate::client;
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use std::sync::Arc;
 
@@ -10,8 +10,8 @@ pub struct Receiver {
     error_message: Option<String>,
     disconnect_handle: Option<client::DisconnectHandle>,
     runtime: Arc<Runtime>,
-    frame_receiver: Option<Receiver<Vec<u8>>>,
-    current_frame: Optio<Vec<u8>>,
+    frame_receiver: Option<mpsc::Receiver<Vec<u8>>>,
+    current_frame: Option<Vec<u8>>,
     width: usize,
     height: usize,
 }
@@ -27,9 +27,9 @@ impl Receiver {
             disconnect_handle: None,
             runtime,
             frame_receiver: None,
-            current_frame: 
+            current_frame: None,
             width: 0,
-            height: 0
+            height: 0,
         }
     }
 

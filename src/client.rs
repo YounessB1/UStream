@@ -38,7 +38,7 @@ pub async fn connect_to_server(
     let port = 9041;
     let address_port = format!("{}:{}", ip_address, port);
 
-    let addr: SocketAddr = address:port.parse().map_err(|e| {
+    let addr: SocketAddr = address_port.parse().map_err(|e| {
         ReceiverError::ConnectionError(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             e,
