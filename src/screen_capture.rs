@@ -1,8 +1,7 @@
 use scrap::{Capturer, Display};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc};
 use std::thread;
 use std::time::Duration;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::io::ErrorKind::WouldBlock;
 
 fn convert_bgra_to_rgba(frame: &[u8], width: usize, height: usize) -> Vec<u8> {
@@ -18,11 +17,7 @@ fn convert_bgra_to_rgba(frame: &[u8], width: usize, height: usize) -> Vec<u8> {
 }
 
 pub struct ScreenCapture {
-    pub rx: mpsc::Receiver<Vec<u8>>,  // Receiver for video data (H.264 encoded)
-    capture_thread: Option<thread::JoinHandle<()>>,  // Handle to join the capture thread
-    stop_flag: Arc<AtomicBool>, // Flag to stop the capture thread
-    pub width: usize,
-    pub height: usize  
+    pub rx: mpsc::Receiver<Vec<u8>>, 
 }
 
 impl ScreenCapture {
@@ -31,17 +26,7 @@ impl ScreenCapture {
         // Create a channel to send video data
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
 
-        let display = Display::primary().unwrap();
-        let temp_capturer = Capturer::new(display).unwrap();
-        let width = temp_capturer.width();
-        let height = temp_capturer.height();
-
-        // Flag to stop the background thread
-        let stop_flag = Arc::new(AtomicBool::new(false));
-
-        // Spawn the background thread for screen capture and video encoding
-        let stop_flag_clone = Arc::clone(&stop_flag);
-        let capture_thread = Some(thread::spawn(move || {
+        thread::spawn(move || {
             // Create a Capturer to capture the screen
             let display = Display::primary().unwrap();
             let mut capturer = Capturer::new(display).unwrap();
@@ -49,7 +34,7 @@ impl ScreenCapture {
             let height = capturer.height();
             // Start capturing frames in a loop
             let capture_interval = Duration::from_millis(30);
-            while !stop_flag_clone.load(Ordering::SeqCst) {
+            loop {
                 match capturer.frame() {
                     Ok(frame) => {
                         let rgba_frame = convert_bgra_to_rgba(&frame, width, height);
@@ -69,29 +54,34 @@ impl ScreenCapture {
                 // Sleep for the capture interval (to control FPS)
                 thread::sleep(capture_interval);
             }
-
-            // Inform that the capture thread is stopping
-            println!("Capture thread stopped.");
-        }));
+        });
 
         Ok(ScreenCapture {
-            rx,
-            capture_thread,
-            stop_flag,
-            width,
-            height
+            rx
         })
     }
+}
 
-    // Method to stop the capture thread
-    pub fn stop_capture(&mut self) {
-        // Set the stop flag to true, which will stop the capture thread
-        self.stop_flag.store(true, Ordering::SeqCst);
+pub fn get_resolution(frame_data: &[u8]) -> Option<(usize, usize)> {
+    let total_pixels = frame_data.len() / 4;
+    let common_resolutions = [
+        (1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160),
+        (5120, 2880), (7680, 4320), (1280, 800), (1440, 900), (1680, 1050),
+        (1920, 1200), (2560, 1600), (3840, 2400), (2560, 1080), (3440, 1440),
+        (3840, 1600), (5120, 2160), (6880, 2880), (3840, 1080), (5120, 1440),
+        (7680, 2160), (640, 480), (800, 600), (1024, 768), (1280, 1024),
+        (1600, 1200), (2048, 1536), (1280, 1024), (2160, 1440), (3000, 2000),
+        (3200, 2133), (1366, 768), (1536, 864), (1792, 1344), (2048, 1080),
+        (2048, 1152), (2048, 2048), (3840, 3840), (4096, 2160), (6016, 3384),
+        (7680, 3200), (10240, 4320),
+    ];
 
-        // Join the thread to make sure it finishes cleanly
-        if let Some(handle) = self.capture_thread.take() {
-            handle.join().unwrap();
-            println!("Capture thread joined.");
+    // Find a matching resolution
+    common_resolutions.iter().find_map(|&(width, height)| {
+        if total_pixels == width * height {
+            Some((width, height))
+        } else {
+            None
         }
-    }
+    })
 }
