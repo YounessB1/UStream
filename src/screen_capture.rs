@@ -32,6 +32,7 @@ impl ScreenCapture {
             let mut capturer = Capturer::new(display).unwrap();
             let width = capturer.width();
             let height = capturer.height();
+            println!("Screen resolution: {}x{}", width, height);
             // Start capturing frames in a loop
             let capture_interval = Duration::from_millis(30);
             loop {
@@ -75,7 +76,7 @@ pub fn get_resolution(frame_data: &[u8]) -> Option<(usize, usize)> {
         (2048, 1152), (2048, 2048), (3840, 3840), (4096, 2160), (6016, 3384),
         (7680, 3200), (10240, 4320),(2560,1664),(3024, 1964)
     ];
-
+    println!("Total pixels: {}", total_pixels);
     // Find a matching resolution
     common_resolutions.iter().find_map(|&(width, height)| {
         if total_pixels == width * height {

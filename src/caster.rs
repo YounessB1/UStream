@@ -3,6 +3,7 @@ use crate::screen_capture::{ScreenCapture, get_resolution};
 use crate::crop_blank::{crop,blank};
 use crate:: server::StreamServer;
 use std::sync::Arc;
+
 pub struct Caster {
     capture: ScreenCapture,        // Screen capture instance
     server: StreamServer,
@@ -181,7 +182,10 @@ impl Caster {
     
             // Disconnect button
             if ui.add_sized([120.0, 30.0], egui::Button::new("Disconnect")).clicked() {
-                // self.disconnect(); // Disconnect action
+                let runtime = Arc::clone(&self.server.runtime);
+                runtime.block_on(async {
+                    self.server.disconnect().await;
+                });
             }
         });
     }

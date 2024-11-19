@@ -5,7 +5,7 @@ use tokio::runtime::Runtime;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::net::SocketAddr;
 use std::collections::HashSet;
-use bytes::Bytes;
+use bytes::{Bytes,BufMut};
 
 // Define a struct to manage the server state
 pub struct StreamServer {
@@ -22,7 +22,7 @@ impl StreamServer {
         // Create a Tokio runtime
         let runtime = Arc::new(Runtime::new().unwrap());
         
-        let (sender, _) = broadcast::channel(16); // Buffer size of 16 messages
+        let (sender, _) = broadcast::channel(256); // Buffer size of 16 messages
         let clients = Arc::new(Mutex::new(HashSet::new()));
         let is_streaming = Arc::new(Mutex::new(false));
         let client_count = Arc::new(AtomicUsize::new(0));
@@ -71,7 +71,7 @@ impl StreamServer {
         client_count: Arc<AtomicUsize>,
         addr: SocketAddr,
     ) {
-        let mut receiver = receiver.subscribe();
+        let mut receiver = receiver.clone().subscribe();
         loop {
             match receiver.recv().await {
                 Ok(frame) => {
@@ -83,15 +83,23 @@ impl StreamServer {
             }
         }
         println!("Client disconnected: {}", addr);
-        clients.lock().await.remove(&addr);
+        let mut clients_guard = clients.lock().await;
+        clients_guard.remove(&addr);
+        drop(clients_guard);
         client_count.fetch_sub(1, Ordering::SeqCst);
     }
 
     // Broadcast a frame to all connected clients
     pub async fn broadcast_frame(&self, frame: Vec<u8>) {
-        if *self.is_streaming.lock().await {
-            let _ = self.sender.send(Bytes::from(frame));
-        }
+        let frame_size = (frame.len() as u32).to_be_bytes();
+
+        // Step 2: Combine the frame size and frame data
+        let mut buffer = Vec::with_capacity(4 + frame.len());
+        buffer.extend_from_slice(&frame_size); // Add the frame size
+        buffer.extend_from_slice(&frame);     // Add the frame data
+    
+        // Step 3: Send the combined buffer over the broadcast channel
+        let _ = self.sender.send(Bytes::from(buffer));
     }
 
     // Disconnect all clients

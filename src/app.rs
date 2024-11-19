@@ -36,7 +36,7 @@ impl eframe::App for UStreamApp {
 
                 // Render content based on the selected mode
                 match self.mode.as_str() {
-                    "receiver" => self.receiver.render(ui),
+                    "receiver" => self.receiver.render(ui, ctx),
                     "caster" => self.caster.render(ui, ctx),
                     _ => (),
                 }

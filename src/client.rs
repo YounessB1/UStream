@@ -59,7 +59,7 @@ pub async fn connect_to_server(
 
     // Spawn a task to handle receiving data from the server
     tokio::spawn(async move {
-        let mut buffer = vec![0; 4096]; // Adjust buffer size as needed
+        let mut buffer = vec![0; 200000000]; // Adjust buffer size as needed
 
         loop {
             // Check for shutdown signal
@@ -68,28 +68,27 @@ pub async fn connect_to_server(
                 break;
             }
 
-            match stream.read(&mut buffer).await {
-                Ok(0) => {
-                    // Connection closed
-                    println!("Connection closed by server.");
-                    break;
-                }
-                Ok(n) => {
-                    let frame = buffer[..n].to_vec(); // Extract the received frame
-
-                    // Send the frame to the main application via the channel
-                    if frame_tx.send(frame).await.is_err() {
-                        // If the receiver side is closed, stop the loop
-                        break;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Failed to receive data: {}", e);
-                    break;
-                }
+            let mut size_buffer = [0u8; 4];
+            if let Err(e) = stream.read_exact(&mut size_buffer).await {
+                eprintln!("Failed to read frame size: {}", e);
+                break;
+            }
+    
+            let frame_size = u32::from_be_bytes(size_buffer) as usize;
+    
+            // Step 2: Read the frame data
+            let mut frame_buffer = vec![0u8; frame_size];
+            if let Err(e) = stream.read_exact(&mut frame_buffer).await {
+                eprintln!("Failed to read frame data: {}", e);
+                break;
+            }
+    
+            // Step 3: Send the frame to the main application via the channel
+            if frame_tx.send(frame_buffer).await.is_err() {
+                // If the receiver side is closed, stop the loop
+                break;
             }
         }
-
         println!("Receiver task exiting.");
     });
 
