@@ -78,8 +78,14 @@ impl Receiver {
         if self.connected {
             if let Some(frame_rx) = &mut self.frame_receiver {
                 if let Ok(frame) = frame_rx.try_recv() {
-                    println!("Received frame");
-                    self.current_frame = Some(frame);
+                    if frame.is_empty() {
+                        println!("Connection closed by server, stopping receiver.");
+                        self.connected = false;
+                        self.current_frame = None;
+                    }
+                    else {
+                        self.current_frame = Some(frame);
+                    }
                 }
             }
         }
@@ -151,10 +157,11 @@ impl Receiver {
     }
 
     fn handle_disconnect(&mut self) {
-        println!("Disconnected");
         if let Some(handle) = self.disconnect_handle.take() {
             self.runtime.block_on(handle.disconnect());
+            println!("Disconnected");
         }
         self.connected = false;
+        self.current_frame = None;
     }
 }

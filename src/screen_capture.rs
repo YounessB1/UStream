@@ -3,6 +3,7 @@ use std::sync::{mpsc};
 use std::thread;
 use std::time::Duration;
 use std::io::ErrorKind::WouldBlock;
+use tokio::sync::watch;
 
 fn convert_bgra_to_rgba(frame: &[u8], width: usize, height: usize) -> Vec<u8> {
     let mut rgba_frame = Vec::with_capacity((width * height * 4) as usize);
@@ -17,14 +18,14 @@ fn convert_bgra_to_rgba(frame: &[u8], width: usize, height: usize) -> Vec<u8> {
 }
 
 pub struct ScreenCapture {
-    pub rx: mpsc::Receiver<Vec<u8>>, 
+    pub rx: watch::Receiver<Vec<u8>>, 
 }
 
 impl ScreenCapture {
     // Constructor that initializes the capture thread and returns the receiver
     pub fn new() -> Result<Self, String> {
-        // Create a channel to send video data
-        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        // Create a watch channel to hold the latest frame
+        let (tx, rx) = watch::channel(vec![]);
 
         thread::spawn(move || {
             // Create a Capturer to capture the screen
@@ -32,20 +33,19 @@ impl ScreenCapture {
             let mut capturer = Capturer::new(display).unwrap();
             let width = capturer.width();
             let height = capturer.height();
-            println!("Screen resolution: {}x{}", width, height);
             // Start capturing frames in a loop
             let capture_interval = Duration::from_millis(30);
             loop {
                 match capturer.frame() {
                     Ok(frame) => {
                         let rgba_frame = convert_bgra_to_rgba(&frame, width, height);
-                        if let Err(e) = tx.send(rgba_frame.to_vec()) {
-                            eprintln!("Error sending frame: {}", e);
+                        if tx.send(rgba_frame.to_vec()).is_err() {
+                            eprintln!("Receiver has been dropped, stopping capture.");
                             break;
                         }
                     }
                     Err(error) => {
-                        if error.kind() != WouldBlock {
+                        if error.kind() != std::io::ErrorKind::WouldBlock {
                             eprintln!("Error capturing frame: {:?}", error);
                             break;
                         }
@@ -57,9 +57,16 @@ impl ScreenCapture {
             }
         });
 
-        Ok(ScreenCapture {
-            rx
-        })
+        Ok(ScreenCapture { rx })
+    }
+
+    pub fn receive_frame(&mut self) -> Option<Vec<u8>> {
+        let frame = self.rx.borrow();
+        if !frame.is_empty() {
+            Some(frame.clone())
+        } else {
+            None
+        }
     }
 }
 
@@ -76,7 +83,6 @@ pub fn get_resolution(frame_data: &[u8]) -> Option<(usize, usize)> {
         (2048, 1152), (2048, 2048), (3840, 3840), (4096, 2160), (6016, 3384),
         (7680, 3200), (10240, 4320),(2560,1664),(3024, 1964)
     ];
-    println!("Total pixels: {}", total_pixels);
     // Find a matching resolution
     common_resolutions.iter().find_map(|&(width, height)| {
         if total_pixels == width * height {

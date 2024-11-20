@@ -1,5 +1,5 @@
 use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt};
+use tokio::io::{self,AsyncReadExt};
 use tokio::sync::{mpsc,watch};
 use std::net::SocketAddr;
 use thiserror::Error;
@@ -34,7 +34,7 @@ impl DisconnectHandle {
 // The function to connect to the server and start receiving frames
 pub async fn connect_to_server(
     ip_address: &str,
-) -> Result<(FrameReceiver, DisconnectHandle), ReceiverError> {
+) -> Result<(mpsc::Receiver<Vec<u8>>, DisconnectHandle), ReceiverError> {
     let port = 9041;
     let address_port = format!("{}:{}", ip_address, port);
 
@@ -55,39 +55,65 @@ pub async fn connect_to_server(
     let (frame_tx, frame_rx) = mpsc::channel(10);
 
     // Create a watch channel for shutdown signaling
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
     // Spawn a task to handle receiving data from the server
     tokio::spawn(async move {
-        let mut buffer = vec![0; 200000000]; // Adjust buffer size as needed
+        let mut buffer = vec![0; 100000000]; // Adjust buffer size as needed
 
         loop {
             // Check for shutdown signal
             if *shutdown_rx.borrow() {
-                println!("Shutdown signal received, stopping receiver.");
                 break;
             }
 
             let mut size_buffer = [0u8; 4];
-            if let Err(e) = stream.read_exact(&mut size_buffer).await {
-                eprintln!("Failed to read frame size: {}", e);
-                break;
+            match stream.read_exact(&mut size_buffer).await {
+                Ok(_) => {
+                    let frame_size = u32::from_be_bytes(size_buffer) as usize;
+
+                    // Step 2: Read the frame data
+                    let mut frame_buffer = vec![0u8; frame_size];
+                    match stream.read_exact(&mut frame_buffer).await {
+                        Ok(_) => {
+                            // Step 3: Send the frame to the main application via the channel
+                            if frame_tx.send(frame_buffer).await.is_err() {
+                                // If the receiver side is closed, stop the loop
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to read frame data: {}", e);
+                            // Handle EOF or other read errors
+                            if e.kind() == io::ErrorKind::UnexpectedEof {
+                                println!("Connection closed by server.");
+                                if let Err(_e) = frame_tx.send(vec![]).await {
+                                    eprintln!("Failed to notify receiver about connection closure");
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to read frame size: {}", e);
+                    // Handle EOF or other read errors
+                    if e.kind() == io::ErrorKind::UnexpectedEof {
+                        println!("Connection closed by server.");
+                        if let Err(_e) = frame_tx.send(vec![]).await {
+                            eprintln!("Failed to notify receiver about connection closure");
+                        }
+                    }
+                    break;
+                }
             }
-    
-            let frame_size = u32::from_be_bytes(size_buffer) as usize;
-    
-            // Step 2: Read the frame data
-            let mut frame_buffer = vec![0u8; frame_size];
-            if let Err(e) = stream.read_exact(&mut frame_buffer).await {
-                eprintln!("Failed to read frame data: {}", e);
-                break;
+        }
+        if let Ok(stream_std) = stream.into_std() {
+            use std::net::Shutdown;
+            if let Err(e) = stream_std.shutdown(Shutdown::Both) {
+                eprintln!("Error shutting down the connection: {}", e);
             }
-    
-            // Step 3: Send the frame to the main application via the channel
-            if frame_tx.send(frame_buffer).await.is_err() {
-                // If the receiver side is closed, stop the loop
-                break;
-            }
+            drop(stream_std);
         }
         println!("Receiver task exiting.");
     });

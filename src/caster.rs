@@ -89,7 +89,7 @@ impl Caster {
         });
         ui.add_space(20.0);
         // Try to receive a frame from the capture thread
-        if let Ok(frame_data) = self.capture.rx.try_recv() {
+        if let Some(frame_data) = self.capture.receive_frame() {
             self.current_frame = Some(frame_data);
             crop(
                 &mut self.current_frame.as_mut().unwrap(),
@@ -133,7 +133,7 @@ impl Caster {
             // Determine available space and aspect ratio
             let mut available_size = ui.available_size();
             available_size.x -= 10.0;
-            available_size.y -= 80.0;
+            available_size.y -= 100.0;
             let aspect_ratio = width as f32 / height as f32;
 
             // Calculate the target size to fit the frame within available space
@@ -149,39 +149,39 @@ impl Caster {
             ui.label("No frame available.");
         }
 
-        ui.add_space(10.0);
+        //ui.add_space(10.0);
 
-        ui.horizontal(|ui| {
-            // Display the number of connected clients
-            let client_count = self.server.get_client_count();
-            ui.label(format!("Connected Clients: {}", client_count));
-        });
+        ui.horizontal_centered(|ui| {
+            // Stream/Pause button with Ctrl+S shortcut
+            let stream_button_text = if self.is_streaming { "Pause (Ctrl + S)" } else { "Stream (Ctrl + S)" };
+            let stream_button = ui.button(stream_button_text);
         
-        // Add some spacing between the label and the buttons
-        ui.add_space(10.0);
-
-
-        ui.horizontal_centered(|ui| {  // This horizontally centers the buttons
-            // Stream/Pause button
-            let stream_button_text = if self.is_streaming { "Pause" } else { "Stream" };
-            if ui.add_sized([120.0, 30.0], egui::Button::new(stream_button_text)).clicked() {
-                self.is_streaming= !self.is_streaming;
+            // Check for both the button click and the Ctrl + S key press
+            if stream_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S))) {
+                self.is_streaming = !self.is_streaming;
             }
-    
+        
             // Add space between buttons
-            ui.add_space(10.0); // Adjust the space between buttons as needed
-    
-            // Blank/Stop Blank button
-            let blank_button_text = if self.is_blank { "Stop Blank" } else { "Blank" };
-            if ui.add_sized([120.0, 30.0], egui::Button::new(blank_button_text)).clicked() {
+            ui.add_space(10.0);
+        
+            // Blank/Stop Blank button with Ctrl+B shortcut
+            let blank_button_text = if self.is_blank { "Stop Blank (Ctrl + B)" } else { "Blank (Ctrl + B)" };
+            let blank_button = ui.button(blank_button_text);
+        
+            // Check for both the button click and the Ctrl + B key press
+            if blank_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::B))) {
                 self.is_blank = !self.is_blank;
             }
-    
+        
             // Add space between buttons
-            ui.add_space(10.0); // Adjust the space between buttons as needed
-    
-            // Disconnect button
-            if ui.add_sized([120.0, 30.0], egui::Button::new("Disconnect")).clicked() {
+            ui.add_space(10.0);
+        
+            // Disconnect button with Ctrl+D shortcut
+            let disconnect_button = ui.button("Disconnect  (Ctrl + D)");
+        
+            // Check for both the button click and the Ctrl + D key press
+            if disconnect_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D))) {
+                self.is_streaming = false;
                 let runtime = Arc::clone(&self.server.runtime);
                 runtime.block_on(async {
                     self.server.disconnect().await;

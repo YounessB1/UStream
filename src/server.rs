@@ -4,16 +4,16 @@ use tokio::io::{AsyncWriteExt};
 use tokio::runtime::Runtime;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::net::SocketAddr;
-use std::collections::HashSet;
+use std::collections::{HashSet,HashMap};
 use bytes::{Bytes,BufMut};
+use futures::future::join_all;
 
 // Define a struct to manage the server state
 pub struct StreamServer {
-    clients: Arc<Mutex<HashSet<SocketAddr>>>, // Track connected clients
-    sender: broadcast::Sender<Bytes>,         // Broadcast channel for streaming data
-    is_streaming: Arc<Mutex<bool>>,           // Streaming state
+    sockets: Arc<Mutex<HashMap<SocketAddr, Arc<Mutex<TcpStream>>>>>, // Updated type
+    sender: broadcast::Sender<Bytes>,                               // Broadcast channel
     pub runtime: Arc<Runtime>,
-    client_count: Arc<AtomicUsize>,
+    pub client_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl StreamServer {
@@ -21,40 +21,47 @@ impl StreamServer {
     pub fn new() -> Self {
         // Create a Tokio runtime
         let runtime = Arc::new(Runtime::new().unwrap());
-        
-        let (sender, _) = broadcast::channel(256); // Buffer size of 16 messages
-        let clients = Arc::new(Mutex::new(HashSet::new()));
-        let is_streaming = Arc::new(Mutex::new(false));
-        let client_count = Arc::new(AtomicUsize::new(0));
+        let (sender, _) = broadcast::channel(256); // Buffer size of 256 messages
+        let sockets = Arc::new(Mutex::new(HashMap::new()));
+        let client_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
         let server = Self {
-            clients: Arc::clone(&clients),
+            sockets: Arc::clone(&sockets),
             sender: sender.clone(),
-            is_streaming: Arc::clone(&is_streaming),
             runtime: Arc::clone(&runtime),
             client_count: Arc::clone(&client_count),
         };
 
         // Use the runtime to spawn a task that starts the server
         let runtime_clone = Arc::clone(&runtime);
+        let sockets_clone = Arc::clone(&sockets);
         let client_count_clone = Arc::clone(&client_count);
+
         runtime.spawn(async move {
-            let listener = TcpListener::bind(("0.0.0.0", 9041)).await.unwrap();
+            let listener = match TcpListener::bind(("0.0.0.0", 9041)).await {
+                Ok(listener) => listener,
+                Err(e) => {
+                    return; // Exit the task if binding fails
+                }
+            };
             println!("Server started on port 9041");
 
             loop {
                 if let Ok((socket, addr)) = listener.accept().await {
                     println!("Client connected: {}", addr);
-                    clients.lock().await.insert(addr);
-                    client_count_clone.fetch_add(1, Ordering::SeqCst); 
+                    let socket_arc = Arc::new(Mutex::new(socket));
+
+                    // Add the new socket to the sockets map
+                    sockets_clone.lock().await.insert(addr, Arc::clone(&socket_arc));
+                    client_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
                     let sender = sender.clone();
-                    let clients = Arc::clone(&clients);
+                    let sockets = Arc::clone(&sockets_clone);
                     let client_count = Arc::clone(&client_count_clone);
 
                     // Spawn a task to handle the client
                     runtime_clone.spawn(async move {
-                        Self::handle_client(socket, sender, clients, client_count, addr).await;
+                        Self::handle_client(socket_arc, sender, sockets, client_count, addr).await;
                     });
                 }
             }
@@ -65,52 +72,69 @@ impl StreamServer {
 
     // Handle an individual client connection
     async fn handle_client(
-        mut socket: TcpStream,
+        socket: Arc<Mutex<TcpStream>>, // Wrapped in Arc<Mutex<>>
         mut receiver: broadcast::Sender<Bytes>,
-        clients: Arc<Mutex<HashSet<SocketAddr>>>,
-        client_count: Arc<AtomicUsize>,
+        sockets: Arc<Mutex<HashMap<SocketAddr, Arc<Mutex<TcpStream>>>>>,
+        client_count: Arc<std::sync::atomic::AtomicUsize>,
         addr: SocketAddr,
     ) {
         let mut receiver = receiver.clone().subscribe();
+
         loop {
             match receiver.recv().await {
                 Ok(frame) => {
+                    let mut socket = socket.lock().await;
                     if socket.write_all(&frame).await.is_err() {
                         break;
                     }
                 }
-                Err(_) => break, // Channel closed, exit loop
+                Err(_) => break, // Channel closed
             }
         }
+
         println!("Client disconnected: {}", addr);
-        let mut clients_guard = clients.lock().await;
-        clients_guard.remove(&addr);
-        drop(clients_guard);
-        client_count.fetch_sub(1, Ordering::SeqCst);
+        sockets.lock().await.remove(&addr);
+        client_count.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     // Broadcast a frame to all connected clients
     pub async fn broadcast_frame(&self, frame: Vec<u8>) {
         let frame_size = (frame.len() as u32).to_be_bytes();
 
-        // Step 2: Combine the frame size and frame data
         let mut buffer = Vec::with_capacity(4 + frame.len());
         buffer.extend_from_slice(&frame_size); // Add the frame size
         buffer.extend_from_slice(&frame);     // Add the frame data
-    
-        // Step 3: Send the combined buffer over the broadcast channel
+
         let _ = self.sender.send(Bytes::from(buffer));
     }
 
     // Disconnect all clients
     pub async fn disconnect(&self) {
-        let mut clients = self.clients.lock().await;
-        clients.clear();
-        self.client_count.store(0, Ordering::SeqCst);
-        println!("All clients disconnected");
+        let mut sockets = self.sockets.lock().await;
+        let addr_list: Vec<SocketAddr> = sockets.keys().cloned().collect();
+    
+        // Create a list of tasks to shutdown sockets concurrently
+        let shutdown_tasks: Vec<_> = addr_list.into_iter().map(|addr| {
+            let socket = sockets.remove(&addr);
+            async move {
+                if let Some(socket) = socket {
+                    let mut socket = socket.lock().await;
+                    if let Err(e) = socket.shutdown().await {
+                        eprintln!("Failed to close socket {}: {}", addr, e);
+                    }
+                }
+            }
+        }).collect();
+    
+        // Await all shutdown tasks in parallel
+        futures::future::join_all(shutdown_tasks).await;
+    
+        // Reset the client count
+        self.client_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        println!("All clients disconnected and sockets closed");
     }
 
     pub fn get_client_count(&self) -> usize {
-        self.client_count.load(Ordering::SeqCst)
+        self.client_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
