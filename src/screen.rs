@@ -7,18 +7,26 @@ use tokio::sync::watch;
 use serde::{Deserialize, Serialize};
 
 fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let stride = frame.len() / height as usize; // Calculate stride
-    let row_width = width as usize * 4;        // Width of the row in bytes (RGBA)
-
-    let mut rgba_data = Vec::with_capacity(row_width * height as usize);
+    let stride = width as usize * 4; // Assuming 4 bytes per pixel (BGRA)
+    let mut rgba_data = Vec::with_capacity((width * height * 4) as usize); // Prepare a buffer for RGBA data
 
     for y in 0..height as usize {
-        let start = y * stride;              // Start of the row in the buffer
-        let end = start + row_width;        // End of the valid data in the row
+        // The starting byte of the current row in the frame
+        let row_start = y * stride;
+        
+        for x in 0..width as usize {
+            let pixel_start = row_start + x * 4;  // Each pixel has 4 bytes: BGRA
 
-        // Process the row and convert BGRA to RGBA
-        for chunk in frame[start..end].chunks_exact(4) {
-            rgba_data.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]); // BGR -> RGB
+            // BGRA: [Blue, Green, Red, Alpha] -> RGBA: [Red, Green, Blue, Alpha]
+            let blue = frame[pixel_start];
+            let green = frame[pixel_start + 1];
+            let red = frame[pixel_start + 2];
+            let alpha = frame[pixel_start + 3];
+
+            rgba_data.push(red);
+            rgba_data.push(green);
+            rgba_data.push(blue);
+            rgba_data.push(alpha);
         }
     }
 
