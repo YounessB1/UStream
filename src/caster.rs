@@ -1,13 +1,12 @@
 use eframe::egui;
-use crate::screen_capture::{ScreenCapture, get_resolution};
-use crate::crop_blank::{crop,blank};
+use crate::screen::{ScreenCapture, Frame, CropValues, crop, blank};
 use crate:: server::StreamServer;
 use std::sync::Arc;
 
 pub struct Caster {
     capture: ScreenCapture,        // Screen capture instance
     server: StreamServer,
-    current_frame: Option<Vec<u8>>, // Current frame data to display
+    current_frame: Option<Frame>, // Current frame data to display
     width: usize,
     height: usize,
     crop: CropValues,
@@ -15,30 +14,19 @@ pub struct Caster {
     is_blank : bool,
 }
 
-pub struct CropValues {
-    left: f32,
-    right: f32,
-    top: f32,
-    bottom: f32,
-}
-
 impl Caster {
     // Initialize the Caster with a new ScreenCapture instance
     pub fn new() -> Self {
         let capture = ScreenCapture::new().unwrap();
         let server = StreamServer::new();
+        let crop = CropValues::new(0.0, 0.0, 0.0, 0.0);
         Self {
             capture,
             server,
             current_frame: None,
             width: 0,
             height: 0,
-            crop: CropValues {
-                left: 0.0,
-                right: 0.0,
-                top: 0.0,
-                bottom: 0.0,
-            },
+            crop,
             is_streaming: false,
             is_blank: false
         }
@@ -89,20 +77,13 @@ impl Caster {
         });
         ui.add_space(20.0);
         // Try to receive a frame from the capture thread
-        if let Some(frame_data) = self.capture.receive_frame() {
-            self.current_frame = Some(frame_data);
-            crop(
-                &mut self.current_frame.as_mut().unwrap(),
-                self.width,
-                self.height,
-                self.crop.left,
-                self.crop.right,
-                self.crop.top,
-                self.crop.bottom,
-            );
-            blank( &mut self.current_frame.as_mut().unwrap(),self.is_blank);
+        if let Some(frame) = self.capture.receive_frame() {
+            self.current_frame = Some(frame.clone());
+            crop(&mut self.current_frame.as_mut().unwrap(), self.crop.clone());
+            blank(&mut self.current_frame.as_mut().unwrap(), self.is_blank);
         }
         // send frame
+        
         let runtime = Arc::clone(&self.server.runtime);
         if self.is_streaming{
             let frame = self.current_frame.clone();
@@ -112,21 +93,16 @@ impl Caster {
                 });
             }
         }
+
         // Display the captured frame (if available)
-        if let Some(frame_data) = &self.current_frame {
-            if self.width==0 || self.height==0 {
-                if let Some((width, height)) = get_resolution(frame_data) {
-                    self.width = width;
-                    self.height = height;
-                }
-            }
-            let width = self.width;
-            let height = self.height;
+        if let Some(frame) = &self.current_frame {
+            let width = frame.width as usize;
+            let height = frame.height as usize;
 
             // Convert the raw frame data to an egui-compatible image
             let texture = egui::ColorImage::from_rgba_unmultiplied(
                 [width, height],
-                frame_data,
+                &frame.data,
             );
             let image_handle = ctx.load_texture("screen_frame", texture, Default::default());
 
@@ -177,7 +153,7 @@ impl Caster {
             ui.add_space(10.0);
         
             // Disconnect button with Ctrl+D shortcut
-            let disconnect_button = ui.button("Disconnect  (Ctrl + D)");
+            let disconnect_button = ui.button("Disconnect (Ctrl + D)");
         
             // Check for both the button click and the Ctrl + D key press
             if disconnect_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D))) {

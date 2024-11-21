@@ -1,20 +1,18 @@
 use eframe::egui;
-use crate::client;
+use crate::client::{DisconnectHandle,connect_to_server};
 use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use crate::screen_capture::{ScreenCapture, get_resolution};
+use crate::screen::{ScreenCapture, Frame};
 
 pub struct Receiver {
     ip_address: String,
     connected: bool,
     error_message: Option<String>,
-    disconnect_handle: Option<client::DisconnectHandle>,
+    disconnect_handle: Option<DisconnectHandle>,
     runtime: Arc<Runtime>,
-    frame_receiver: Option<mpsc::Receiver<Vec<u8>>>,
-    current_frame: Option<Vec<u8>>,
-    width: usize,
-    height: usize,
+    frame_receiver: Option<mpsc::Receiver<Option<Frame>>>,
+    current_frame: Option<Frame>,
 }
 
 impl Receiver {
@@ -29,8 +27,6 @@ impl Receiver {
             runtime,
             frame_receiver: None,
             current_frame: None,
-            width: 0,
-            height: 0,
         }
     }
 
@@ -78,39 +74,35 @@ impl Receiver {
         if self.connected {
             if let Some(frame_rx) = &mut self.frame_receiver {
                 if let Ok(frame) = frame_rx.try_recv() {
-                    if frame.is_empty() {
-                        println!("Connection closed by server, stopping receiver.");
-                        self.connected = false;
-                        self.current_frame = None;
-                    }
-                    else {
-                        self.current_frame = Some(frame);
+                    match frame{
+                        Some(frame) => {
+                            self.current_frame = Some(frame.clone());
+                        }
+                        None => {
+                            println!("Connection closed by server, stopping receiver.");
+                            self.connected = false;
+                            self.current_frame = None;
+                        }
                     }
                 }
             }
         }
 
-        if let Some(frame_data) = &self.current_frame {
-            if self.width==0 || self.height==0 {
-                if let Some((width, height)) = get_resolution(frame_data) {
-                    self.width = width;
-                    self.height = height;
-                }
-            }
-            let width = self.width;
-            let height = self.height;
+        if let Some(frame) = &self.current_frame {
+            let width = frame.width as usize;
+            let height = frame.height as usize;
 
             // Convert the raw frame data to an egui-compatible image
             let texture = egui::ColorImage::from_rgba_unmultiplied(
                 [width, height],
-                frame_data,
+                &frame.data,
             );
             let image_handle = ctx.load_texture("screen_frame", texture, Default::default());
 
             // Determine available space and aspect ratio
             let mut available_size = ui.available_size();
             available_size.x -= 10.0;
-            available_size.y -= 80.0;
+            available_size.y -= 100.0;
             let aspect_ratio = width as f32 / height as f32;
 
             // Calculate the target size to fit the frame within available space
@@ -139,7 +131,7 @@ impl Receiver {
 
             // Spawn a new async task to handle the connection
             let result = runtime.block_on(async {
-                client::connect_to_server(&ip).await
+                connect_to_server(&ip).await
             });
 
             match result {

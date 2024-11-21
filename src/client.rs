@@ -3,6 +3,8 @@ use tokio::io::{self,AsyncReadExt};
 use tokio::sync::{mpsc,watch};
 use std::net::SocketAddr;
 use thiserror::Error;
+use bincode;
+use crate::screen::Frame;
 
 #[derive(Debug, Error)]
 pub enum ReceiverError {
@@ -12,13 +14,6 @@ pub enum ReceiverError {
     ReceiveError(std::io::Error),
 }
 
-// Define the type for the frame data (adjust as needed for your use case)
-type Frame = Vec<u8>;
-
-// Type alias for the frame receiver
-pub type FrameReceiver = mpsc::Receiver<Frame>;
-
-// The function to connect to the server and start receiving frames
 #[derive(Clone)]
 pub struct DisconnectHandle {
     shutdown_tx: watch::Sender<bool>,
@@ -34,7 +29,7 @@ impl DisconnectHandle {
 // The function to connect to the server and start receiving frames
 pub async fn connect_to_server(
     ip_address: &str,
-) -> Result<(mpsc::Receiver<Vec<u8>>, DisconnectHandle), ReceiverError> {
+) -> Result<(mpsc::Receiver<Option<Frame>>, DisconnectHandle), ReceiverError> {
     let port = 9041;
     let address_port = format!("{}:{}", ip_address, port);
 
@@ -76,10 +71,18 @@ pub async fn connect_to_server(
                     let mut frame_buffer = vec![0u8; frame_size];
                     match stream.read_exact(&mut frame_buffer).await {
                         Ok(_) => {
-                            // Step 3: Send the frame to the main application via the channel
-                            if frame_tx.send(frame_buffer).await.is_err() {
-                                // If the receiver side is closed, stop the loop
-                                break;
+                            match bincode::deserialize::<Frame>(&frame_buffer) {
+                                Ok(frame) => {
+                                    // Step 4: Send the frame to the main application via the channel
+                                    if frame_tx.send(Some(frame)).await.is_err() {
+                                        // If the receiver side is closed, stop the loop
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to deserialize frame: {}", e);
+                                    break;
+                                }
                             }
                         }
                         Err(e) => {
@@ -87,7 +90,7 @@ pub async fn connect_to_server(
                             // Handle EOF or other read errors
                             if e.kind() == io::ErrorKind::UnexpectedEof {
                                 println!("Connection closed by server.");
-                                if let Err(_e) = frame_tx.send(vec![]).await {
+                                if let Err(_e) = frame_tx.send(None).await {
                                     eprintln!("Failed to notify receiver about connection closure");
                                 }
                             }
@@ -100,7 +103,7 @@ pub async fn connect_to_server(
                     // Handle EOF or other read errors
                     if e.kind() == io::ErrorKind::UnexpectedEof {
                         println!("Connection closed by server.");
-                        if let Err(_e) = frame_tx.send(vec![]).await {
+                        if let Err(_e) = frame_tx.send(None).await {
                             eprintln!("Failed to notify receiver about connection closure");
                         }
                     }

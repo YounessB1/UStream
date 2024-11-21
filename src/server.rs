@@ -7,6 +7,8 @@ use std::net::SocketAddr;
 use std::collections::{HashSet,HashMap};
 use bytes::{Bytes,BufMut};
 use futures::future::join_all;
+use crate::screen::Frame;
+use bincode;
 
 // Define a struct to manage the server state
 pub struct StreamServer {
@@ -98,12 +100,20 @@ impl StreamServer {
     }
 
     // Broadcast a frame to all connected clients
-    pub async fn broadcast_frame(&self, frame: Vec<u8>) {
-        let frame_size = (frame.len() as u32).to_be_bytes();
+    pub async fn broadcast_frame(&self, frame: Frame) {
+        let serialized_frame = match bincode::serialize(&frame) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Failed to serialize frame: {}", e);
+                return;
+            }
+        };
+        let frame_size = (serialized_frame.len() as u32).to_be_bytes();
 
-        let mut buffer = Vec::with_capacity(4 + frame.len());
-        buffer.extend_from_slice(&frame_size); // Add the frame size
-        buffer.extend_from_slice(&frame);     // Add the frame data
+        // Prepare the buffer with size + serialized data
+        let mut buffer = Vec::with_capacity(4 + serialized_frame.len());
+        buffer.extend_from_slice(&frame_size);      // Frame size (4 bytes)
+        buffer.extend_from_slice(&serialized_frame);     // Add the frame data
 
         let _ = self.sender.send(Bytes::from(buffer));
     }

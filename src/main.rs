@@ -1,8 +1,7 @@
 mod app;
 mod receiver;
 mod caster;
-mod screen_capture;
-mod crop_blank;
+mod screen;
 mod client;
 mod server;
 
