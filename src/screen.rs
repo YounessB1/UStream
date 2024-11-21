@@ -7,14 +7,22 @@ use tokio::sync::watch;
 use serde::{Deserialize, Serialize};
 
 fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
-    let mut rgba_frame = vec![0; frame.len()];
-    for (i, chunk) in frame.chunks(4).enumerate() {
-        rgba_frame[i * 4 + 0] = chunk[2]; // R
-        rgba_frame[i * 4 + 1] = chunk[1]; // G
-        rgba_frame[i * 4 + 2] = chunk[0]; // B
-        rgba_frame[i * 4 + 3] = chunk[3]; // A
+    let stride = frame.len() / height as usize; // Calculate stride
+    let row_width = width as usize * 4;        // Width of the row in bytes (RGBA)
+
+    let mut rgba_data = Vec::with_capacity(row_width * height as usize);
+
+    for y in 0..height as usize {
+        let start = y * stride;              // Start of the row in the buffer
+        let end = start + row_width;        // End of the valid data in the row
+
+        // Process the row and convert BGRA to RGBA
+        for chunk in frame[start..end].chunks_exact(4) {
+            rgba_data.extend_from_slice(&[chunk[2], chunk[1], chunk[0], chunk[3]]); // BGR -> RGB
+        }
     }
-    rgba_frame
+
+    rgba_data
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -93,29 +101,6 @@ impl ScreenCapture {
             None
         }
     }
-}
-
-pub fn get_resolution(frame_data: &[u8]) -> Option<(usize, usize)> {
-    let total_pixels = frame_data.len() / 4;
-    let common_resolutions = [
-        (1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160),
-        (5120, 2880), (7680, 4320), (1280, 800), (1440, 900), (1680, 1050),
-        (1920, 1200), (2560, 1600), (3840, 2400), (2560, 1080), (3440, 1440),
-        (3840, 1600), (5120, 2160), (6880, 2880), (3840, 1080), (5120, 1440),
-        (7680, 2160), (640, 480), (800, 600), (1024, 768), (1280, 1024),
-        (1600, 1200), (2048, 1536), (1280, 1024), (2160, 1440), (3000, 2000),
-        (3200, 2133), (1366, 768), (1536, 864), (1792, 1344), (2048, 1080),
-        (2048, 1152), (2048, 2048), (3840, 3840), (4096, 2160), (6016, 3384),
-        (7680, 3200), (10240, 4320),(2560,1664),(3024, 1964)
-    ];
-    // Find a matching resolution
-    common_resolutions.iter().find_map(|&(width, height)| {
-        if total_pixels == width * height {
-            Some((width, height))
-        } else {
-            None
-        }
-    })
 }
 
 impl CropValues {
