@@ -85,14 +85,13 @@ impl Caster {
         // send frame
         
         let runtime = Arc::clone(&self.server.runtime);
-        if self.is_streaming{
-            let frame = self.current_frame.clone();
-            if let Some(frame) = frame {
-                runtime.block_on(async {
-                    self.server.broadcast_frame(frame).await
-                });
-            }
+        let frame = self.current_frame.clone();
+        if let Some(frame) = frame {
+            runtime.block_on(async {
+                self.server.broadcast_frame(frame, self.is_streaming).await
+            });
         }
+
 
         // Display the captured frame (if available)
         if let Some(frame) = &self.current_frame {
@@ -125,7 +124,12 @@ impl Caster {
             ui.label("No frame available.");
         }
 
-        //ui.add_space(10.0);
+        ui.add_space(10.0);
+
+        let client_count = self.server.get_client_count();
+        ui.label(format!("Connected Clients: {}", client_count));
+
+        ui.add_space(10.0);
 
         ui.horizontal_centered(|ui| {
             // Stream/Pause button with Ctrl+S shortcut

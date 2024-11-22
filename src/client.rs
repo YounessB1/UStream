@@ -66,6 +66,9 @@ pub async fn connect_to_server(
             match stream.read_exact(&mut size_buffer).await {
                 Ok(_) => {
                     let frame_size = u32::from_be_bytes(size_buffer) as usize;
+                    if frame_size == 0 {
+                        continue;
+                    }
 
                     // Step 2: Read the frame data
                     let mut frame_buffer = vec![0u8; frame_size];
