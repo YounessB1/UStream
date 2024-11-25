@@ -14,7 +14,7 @@ use bincode;
 pub struct StreamServer {
     sockets: Arc<Mutex<HashMap<SocketAddr, Arc<Mutex<TcpStream>>>>>, // Updated type
     sender: broadcast::Sender<Bytes>,                               // Broadcast channel
-    pub runtime: Arc<Runtime>,
+    runtime: Arc<Runtime>,
     pub client_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -23,7 +23,7 @@ impl StreamServer {
     pub fn new() -> Self {
         // Create a Tokio runtime
         let runtime = Arc::new(Runtime::new().unwrap());
-        let (sender, _) = broadcast::channel(256); // Buffer size of 256 messages
+        let (sender, _) = broadcast::channel(2048); // Buffer size of 256 messages
         let sockets = Arc::new(Mutex::new(HashMap::new()));
         let client_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
@@ -107,7 +107,7 @@ impl StreamServer {
     }
 
     // Broadcast a frame to all connected clients
-    pub async fn broadcast_frame(&self, frame: Frame, is_streaming:bool) {
+    pub fn broadcast_frame(&self, frame: Frame, is_streaming:bool) {
         if is_streaming{
             let serialized_frame = match bincode::serialize(&frame) {
                 Ok(data) => data,
@@ -136,25 +136,21 @@ impl StreamServer {
     }
 
     // Disconnect all clients
-    pub async fn disconnect(&self) {
-        let mut sockets = self.sockets.lock().await;
+    pub fn disconnect(&self) {
+        let mut sockets = self.runtime.block_on(self.sockets.lock());
         let addr_list: Vec<SocketAddr> = sockets.keys().cloned().collect();
     
-        // Create a list of tasks to shutdown sockets concurrently
-        let shutdown_tasks: Vec<_> = addr_list.into_iter().map(|addr| {
-            let socket = sockets.remove(&addr);
-            async move {
-                if let Some(socket) = socket {
+        // Iterate over each socket and perform shutdown synchronously
+        for addr in addr_list {
+            if let Some(socket) = sockets.remove(&addr) {
+                self.runtime.block_on(async {
                     let mut socket = socket.lock().await;
                     if let Err(e) = socket.shutdown().await {
                         eprintln!("Failed to close socket {}: {}", addr, e);
                     }
-                }
+                });
             }
-        }).collect();
-    
-        // Await all shutdown tasks in parallel
-        futures::future::join_all(shutdown_tasks).await;
+        }
     
         // Reset the client count
         self.client_count.store(0, std::sync::atomic::Ordering::SeqCst);

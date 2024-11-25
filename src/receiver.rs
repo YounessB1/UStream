@@ -70,6 +70,8 @@ impl Receiver {
             }
         });
 
+        ui.add_space(20.0);
+
         // Display received frames if connected
         if self.connected {
             if let Some(frame_rx) = &mut self.frame_receiver {

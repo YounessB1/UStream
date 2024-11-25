@@ -36,38 +36,38 @@ impl Caster {
     pub fn render(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("Caster Mode");
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let slider_width = ui.available_width() / 4.0;
-    
+        ui.columns(4, |columns| {
+            let slider_width = columns[0].available_width() / 1.0; // Width of each slider (columns width)
+        
             // Left Crop Slider
-            ui.vertical(|ui| {
+            columns[0].vertical(|ui| {
                 ui.label("Left");
                 ui.add_sized(
                     [slider_width, 20.0],
                     egui::Slider::new(&mut self.crop.left, 0.0..=100.0),
                 );
             });
-    
+        
             // Right Crop Slider
-            ui.vertical(|ui| {
+            columns[1].vertical(|ui| {
                 ui.label("Right");
                 ui.add_sized(
                     [slider_width, 20.0],
                     egui::Slider::new(&mut self.crop.right, 0.0..=100.0),
                 );
             });
-    
+        
             // Top Crop Slider
-            ui.vertical(|ui| {
+            columns[2].vertical(|ui| {
                 ui.label("Top");
                 ui.add_sized(
                     [slider_width, 20.0],
                     egui::Slider::new(&mut self.crop.top, 0.0..=100.0),
                 );
             });
-    
+        
             // Bottom Crop Slider
-            ui.vertical(|ui| {
+            columns[3].vertical(|ui| {
                 ui.label("Bottom");
                 ui.add_sized(
                     [slider_width, 20.0],
@@ -75,6 +75,7 @@ impl Caster {
                 );
             });
         });
+
         ui.add_space(20.0);
         // Try to receive a frame from the capture thread
         if let Some(frame) = self.capture.receive_frame() {
@@ -82,14 +83,11 @@ impl Caster {
             crop(&mut self.current_frame.as_mut().unwrap(), self.crop.clone());
             blank(&mut self.current_frame.as_mut().unwrap(), self.is_blank);
         }
+
         // send frame
-        
-        let runtime = Arc::clone(&self.server.runtime);
         let frame = self.current_frame.clone();
         if let Some(frame) = frame {
-            runtime.block_on(async {
-                self.server.broadcast_frame(frame, self.is_streaming).await
-            });
+            self.server.broadcast_frame(frame, self.is_streaming);
         }
 
 
@@ -131,41 +129,26 @@ impl Caster {
 
         ui.add_space(10.0);
 
-        ui.horizontal_centered(|ui| {
-            // Stream/Pause button with Ctrl+S shortcut
+        ui.columns(3, |columns| {
+            // Stream/Pause button with Ctrl+S shortcut in the first column
             let stream_button_text = if self.is_streaming { "Pause (Ctrl + S)" } else { "Stream (Ctrl + S)" };
-            let stream_button = ui.button(stream_button_text);
-        
-            // Check for both the button click and the Ctrl + S key press
+            let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::YELLOW));
             if stream_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S))) {
                 self.is_streaming = !self.is_streaming;
             }
-        
-            // Add space between buttons
-            ui.add_space(10.0);
-        
-            // Blank/Stop Blank button with Ctrl+B shortcut
+
+            // Blank/Stop Blank button with Ctrl+B shortcut in the second column
             let blank_button_text = if self.is_blank { "Stop Blank (Ctrl + B)" } else { "Blank (Ctrl + B)" };
-            let blank_button = ui.button(blank_button_text);
-        
-            // Check for both the button click and the Ctrl + B key press
+            let blank_button = columns[1].button(blank_button_text);
             if blank_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::B))) {
                 self.is_blank = !self.is_blank;
             }
-        
-            // Add space between buttons
-            ui.add_space(10.0);
-        
-            // Disconnect button with Ctrl+D shortcut
-            let disconnect_button = ui.button("Disconnect (Ctrl + D)");
-        
-            // Check for both the button click and the Ctrl + D key press
+
+            // Disconnect button with Ctrl+D shortcut in the third column
+            let disconnect_button = columns[2].add(egui::Button::new("Disconnect (Ctrl + D)").fill(egui::Color32::RED));
             if disconnect_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D))) {
                 self.is_streaming = false;
-                let runtime = Arc::clone(&self.server.runtime);
-                runtime.block_on(async {
-                    self.server.disconnect().await;
-                });
+                self.server.disconnect();
             }
         });
     }
