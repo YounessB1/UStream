@@ -1,4 +1,6 @@
 use scrap::{Capturer, Display};
+use winit::event_loop::EventLoop;
+use winit::monitor::MonitorHandle;
 use std::sync::{mpsc};
 use std::thread;
 use std::time::Duration;
@@ -45,10 +47,21 @@ pub struct CropValues {
     pub bottom: f32,
 }
 
+pub fn available_displays() -> Vec<String> {
+    let event_loop = EventLoop::new();
+    let winit_monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
+
+    let displays: Vec<String> = winit_monitors
+        .iter()
+        .map(|monitor| monitor.name().unwrap_or_else(|| "Unknown Display".to_string()))
+        .collect();
+
+    displays
+}
+
 impl ScreenCapture {
     // Constructor that initializes the capture thread and returns the receiver
-    pub fn new() -> Result<Self, String> {
-        // Create a watch channel to hold the latest frame
+    pub fn new(index: usize) -> Result<Self, String> {
         let (tx, rx) = watch::channel(Frame {
             data: vec![],
             width: 0,
@@ -57,7 +70,8 @@ impl ScreenCapture {
 
         thread::spawn(move || {
             // Create a Capturer to capture the screen
-            let display = Display::primary().unwrap();
+            let mut displays = Display::all().unwrap();
+            let display = displays.remove(index);
             let mut capturer = Capturer::new(display).unwrap();
             let width = capturer.width() as u32;
             let height = capturer.height() as u32;
