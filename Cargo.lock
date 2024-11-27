@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bytes",
+ "core-graphics 0.22.3",
  "eframe",
  "egui 0.24.1",
  "futures",
