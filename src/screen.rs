@@ -49,10 +49,8 @@ pub struct CropValues {
 
 pub fn available_displays() -> Vec<String> {
     let event_loop = EventLoop::new();
-    let winit_monitors: Vec<MonitorHandle> = event_loop.available_monitors().collect();
-
-    let displays: Vec<String> = winit_monitors
-        .iter()
+    let displays: Vec<String> = event_loop
+        .available_monitors()
         .map(|monitor| monitor.name().unwrap_or_else(|| "Unknown Display".to_string()))
         .collect();
 

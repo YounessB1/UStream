@@ -6,6 +6,7 @@ use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::net::SocketAddr;
 use std::collections::{HashSet,HashMap};
 use bytes::{Bytes,BufMut};
+use std::time::{Instant,Duration};
 use futures::future::join_all;
 use crate::screen::Frame;
 use bincode;
@@ -16,6 +17,7 @@ pub struct StreamServer {
     sender: broadcast::Sender<Bytes>,                               // Broadcast channel
     runtime: Arc<Runtime>,
     pub client_count: Arc<std::sync::atomic::AtomicUsize>,
+    time: Instant,
 }
 
 impl StreamServer {
@@ -32,6 +34,7 @@ impl StreamServer {
             sender: sender.clone(),
             runtime: Arc::clone(&runtime),
             client_count: Arc::clone(&client_count),
+            time: Instant::now(),
         };
 
         // Use the runtime to spawn a task that starts the server
@@ -107,32 +110,37 @@ impl StreamServer {
     }
 
     // Broadcast a frame to all connected clients
-    pub fn broadcast_frame(&self, frame: Frame, is_streaming:bool) {
-        if is_streaming{
-            let serialized_frame = match bincode::serialize(&frame) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Failed to serialize frame: {}", e);
-                    return;
-                }
-            };
-            let frame_size = (serialized_frame.len() as u32).to_be_bytes();
+    pub fn broadcast_frame(&mut self, frame: Frame, is_streaming:bool) {
+        let now = Instant::now();
+        if now.duration_since(self.time) >= Duration::from_millis(30){
+            if is_streaming{
+                let serialized_frame = match bincode::serialize(&frame) {
+                    Ok(data) => data,
+                    Err(e) => {
+                        eprintln!("Failed to serialize frame: {}", e);
+                        return;
+                    }
+                };
+                let frame_size = (serialized_frame.len() as u32).to_be_bytes();
+        
+                // Prepare the buffer with size + serialized data
+                let mut buffer = Vec::with_capacity(4 + serialized_frame.len());
+                buffer.extend_from_slice(&frame_size);      // Frame size (4 bytes)
+                buffer.extend_from_slice(&serialized_frame);     // Add the frame data
+        
+                let _ = self.sender.send(Bytes::from(buffer));
+            }
+            else {
+                // Send only the size prefix of 0 (4 bytes)
+                let frame_size = (0 as u32).to_be_bytes();
+                let mut buffer = Vec::with_capacity(4);
+                buffer.extend_from_slice(&frame_size); 
     
-            // Prepare the buffer with size + serialized data
-            let mut buffer = Vec::with_capacity(4 + serialized_frame.len());
-            buffer.extend_from_slice(&frame_size);      // Frame size (4 bytes)
-            buffer.extend_from_slice(&serialized_frame);     // Add the frame data
-    
-            let _ = self.sender.send(Bytes::from(buffer));
+                let _ = self.sender.send(Bytes::from(buffer));
+            }
+            self.time = now;
         }
-        else {
-            // Send only the size prefix of 0 (4 bytes)
-            let frame_size = (0 as u32).to_be_bytes();
-            let mut buffer = Vec::with_capacity(4);
-            buffer.extend_from_slice(&frame_size); 
 
-            let _ = self.sender.send(Bytes::from(buffer));
-        }
     }
 
     // Disconnect all clients
