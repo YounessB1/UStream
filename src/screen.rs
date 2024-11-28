@@ -6,41 +6,11 @@ use std::io::ErrorKind::WouldBlock;
 use tokio::sync::watch;
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "macos")]
-extern crate core_graphics;
-
-#[cfg(target_os = "macos")]
-use core_graphics::display::{self, Display};
-
-#[cfg(target_os = "macos")]
 pub fn available_displays() -> Vec<String> {
-    use core_graphics::display::get_all_displays;
-
-    // macOS logic: Use core-graphics to get the displays
-    let display_ids = get_all_displays(); // Get all connected displays
-    let display_names: Vec<String> = display_ids
+    let displays: Vec<String> = Display::all()
         .iter()
-        .filter_map(|&display_id| {
-            let display = Display::new(display_id);
-            display.and_then(|d| d.get_name().ok()).map(|name| name.to_string())
-        })
-        .collect();
-    display_names
-}
-
-#[cfg(not(target_os = "macos"))]
-extern crate winit;
-
-#[cfg(not(target_os = "macos"))]
-use winit::event_loop::EventLoop;
-
-#[cfg(not(target_os = "macos"))]
-pub fn available_displays() -> Vec<String> {
-    // Windows/Linux logic: Use winit's EventLoop to get the displays
-    let event_loop = EventLoop::new(); // Create an EventLoop
-    let displays: Vec<String> = event_loop
-        .available_monitors()
-        .map(|monitor| monitor.name().unwrap_or_else(|| "Unknown Display".to_string()))
+        .enumerate()
+        .map(|(index, _)| format!("Monitor {}", index + 1))
         .collect();
     displays
 }
