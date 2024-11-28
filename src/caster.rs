@@ -34,8 +34,6 @@ impl Caster {
     // Render method for the Caster mode
     pub fn render(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.heading("Caster Mode");
-        ui.add_space(10.0);
-
         ui.add_space(20.0);
         // Try to receive a frame from the capture thread
         if let Some(capture) = &mut self.capture {
@@ -96,6 +94,7 @@ impl Caster {
                     );
                 });
             });
+            ui.add_space(20.0);
 
             let width = frame.width as usize;
             let height = frame.height as usize;
