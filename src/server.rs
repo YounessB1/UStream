@@ -4,10 +4,9 @@ use tokio::io::{AsyncWriteExt};
 use tokio::runtime::Runtime;
 use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::net::SocketAddr;
-use std::collections::{HashSet,HashMap};
-use bytes::{Bytes,BufMut};
+use std::collections::{HashMap};
+use bytes::{Bytes};
 use std::time::{Instant,Duration};
-use futures::future::join_all;
 use crate::screen::Frame;
 use bincode;
 
@@ -16,7 +15,7 @@ pub struct StreamServer {
     sockets: Arc<Mutex<HashMap<SocketAddr, Arc<Mutex<TcpStream>>>>>, // Updated type
     sender: broadcast::Sender<Bytes>,                               // Broadcast channel
     runtime: Arc<Runtime>,
-    pub client_count: Arc<std::sync::atomic::AtomicUsize>,
+    client_count: Arc<AtomicUsize>,
     time: Instant,
 }
 
@@ -27,7 +26,7 @@ impl StreamServer {
         let runtime = Arc::new(Runtime::new().unwrap());
         let (sender, _) = broadcast::channel(2048); // Buffer size of 256 messages
         let sockets = Arc::new(Mutex::new(HashMap::new()));
-        let client_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let client_count = Arc::new(AtomicUsize::new(0));
 
         let server = Self {
             sockets: Arc::clone(&sockets),
@@ -45,7 +44,7 @@ impl StreamServer {
         runtime.spawn(async move {
             let listener = match TcpListener::bind(("0.0.0.0", 9041)).await {
                 Ok(listener) => listener,
-                Err(e) => {
+                Err(_) => {
                     return; // Exit the task if binding fails
                 }
             };
@@ -58,7 +57,7 @@ impl StreamServer {
 
                     // Add the new socket to the sockets map
                     sockets_clone.lock().await.insert(addr, Arc::clone(&socket_arc));
-                    client_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    client_count_clone.fetch_add(1,Ordering::SeqCst);
 
                     let sender = sender.clone();
                     let sockets = Arc::clone(&sockets_clone);
@@ -78,9 +77,9 @@ impl StreamServer {
     // Handle an individual client connection
     async fn handle_client(
         socket: Arc<Mutex<TcpStream>>, // Wrapped in Arc<Mutex<>>
-        mut receiver: broadcast::Sender<Bytes>,
+        receiver: broadcast::Sender<Bytes>,
         sockets: Arc<Mutex<HashMap<SocketAddr, Arc<Mutex<TcpStream>>>>>,
-        client_count: Arc<std::sync::atomic::AtomicUsize>,
+        client_count: Arc<AtomicUsize>,
         addr: SocketAddr,
     ) {
         let mut receiver = receiver.clone().subscribe();
@@ -161,11 +160,11 @@ impl StreamServer {
         }
     
         // Reset the client count
-        self.client_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.client_count.store(0,Ordering::SeqCst);
         println!("All clients disconnected and sockets closed");
     }
 
     pub fn get_client_count(&self) -> usize {
-        self.client_count.load(std::sync::atomic::Ordering::SeqCst)
+        self.client_count.load(Ordering::SeqCst)
     }
 }

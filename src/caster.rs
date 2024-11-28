@@ -1,8 +1,6 @@
 use eframe::egui;
 use crate::screen::{ScreenCapture, Frame, CropValues, crop, blank, available_displays};
 use crate:: server::StreamServer;
-use std::sync::Arc;
-
 pub struct Caster {
     displays: Vec<String>,
     capture: Option<ScreenCapture>, // Screen capture instance
@@ -41,7 +39,7 @@ impl Caster {
                 self.current_frame = Some(frame.clone());
                 crop(&mut self.current_frame.as_mut().unwrap(), self.crop.clone());
                 blank(&mut self.current_frame.as_mut().unwrap(), self.is_blank);
-                self.server.broadcast_frame(frame.clone(), self.is_streaming);
+                self.server.broadcast_frame(self.current_frame.clone().unwrap(), self.is_streaming);
             }
         }
         // display possible screens to capture

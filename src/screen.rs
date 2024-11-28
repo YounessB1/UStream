@@ -1,8 +1,6 @@
 use scrap::{Capturer, Display};
-use std::sync::{mpsc};
 use std::thread;
 use std::time::Duration;
-use std::io::ErrorKind::WouldBlock;
 use tokio::sync::watch;
 use serde::{Deserialize, Serialize};
 

@@ -3,7 +3,7 @@ use crate::client::{DisconnectHandle,connect_to_server};
 use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
 use std::sync::Arc;
-use crate::screen::{ScreenCapture, Frame};
+use crate::screen::{Frame};
 
 pub struct Receiver {
     ip_address: String,

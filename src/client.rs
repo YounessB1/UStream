@@ -2,17 +2,9 @@ use tokio::net::TcpStream;
 use tokio::io::{self,AsyncReadExt};
 use tokio::sync::{mpsc,watch};
 use std::net::SocketAddr;
-use thiserror::Error;
 use bincode;
 use crate::screen::Frame;
-
-#[derive(Debug, Error)]
-pub enum ReceiverError {
-    #[error("Failed to connect to server: {0}")]
-    ConnectionError(std::io::Error),
-    #[error("Failed to receive data: {0}")]
-    ReceiveError(std::io::Error),
-}
+use tokio::time::{timeout, Duration};
 
 #[derive(Clone)]
 pub struct DisconnectHandle {
@@ -29,20 +21,19 @@ impl DisconnectHandle {
 // The function to connect to the server and start receiving frames
 pub async fn connect_to_server(
     ip_address: &str,
-) -> Result<(mpsc::Receiver<Option<Frame>>, DisconnectHandle), ReceiverError> {
+) -> Result<(mpsc::Receiver<Option<Frame>>, DisconnectHandle), String > {
     let port = 9041;
     let address_port = format!("{}:{}", ip_address, port);
 
-    let addr: SocketAddr = address_port.parse().map_err(|e| {
-        ReceiverError::ConnectionError(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            e,
-        ))
+    let addr: SocketAddr = address_port.parse().map_err(|_| {
+        format!("Invalid IP address format: {}", ip_address)
     })?;
 
-    let mut stream = TcpStream::connect(addr)
+    // Attempt to connect to the server
+    let mut stream = timeout(Duration::from_secs(1), TcpStream::connect(addr))
         .await
-        .map_err(ReceiverError::ConnectionError)?;
+        .map_err(|_| format!("Connection to {}:{} timed out", ip_address, port))?
+        .map_err(|_| format!("Connection to {}:{} failed", ip_address, port))?;
 
     println!("Successfully connected to {}", addr);
 
@@ -50,12 +41,10 @@ pub async fn connect_to_server(
     let (frame_tx, frame_rx) = mpsc::channel(10);
 
     // Create a watch channel for shutdown signaling
-    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
     // Spawn a task to handle receiving data from the server
     tokio::spawn(async move {
-        let mut buffer = vec![0; 100000000]; // Adjust buffer size as needed
-
         loop {
             // Check for shutdown signal
             if *shutdown_rx.borrow() {
