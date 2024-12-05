@@ -30,7 +30,7 @@ pub async fn connect_to_server(
     })?;
 
     // Attempt to connect to the server
-    let mut stream = timeout(Duration::from_secs(1), TcpStream::connect(addr))
+    let mut stream = timeout(Duration::from_secs(10), TcpStream::connect(addr))
         .await
         .map_err(|_| format!("Connection to {}:{} timed out", ip_address, port))?
         .map_err(|_| format!("Connection to {}:{} failed", ip_address, port))?;

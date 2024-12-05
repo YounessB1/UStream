@@ -2,7 +2,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{broadcast, Mutex};
 use tokio::io::{AsyncWriteExt};
 use tokio::runtime::Runtime;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{Arc, atomic::{AtomicUsize,AtomicBool,Ordering}};
 use std::net::SocketAddr;
 use std::collections::{HashMap};
 use bytes::{Bytes};
@@ -17,6 +17,7 @@ pub struct StreamServer {
     runtime: Arc<Runtime>,
     client_count: Arc<AtomicUsize>,
     time: Instant,
+    priority: AtomicBool,
 }
 
 impl StreamServer {
@@ -34,6 +35,7 @@ impl StreamServer {
             runtime: Arc::clone(&runtime),
             client_count: Arc::clone(&client_count),
             time: Instant::now(),
+            priority: AtomicBool::new(false),
         };
 
         // Use the runtime to spawn a task that starts the server
@@ -110,8 +112,11 @@ impl StreamServer {
 
     // Broadcast a frame to all connected clients
     pub fn broadcast_frame(&mut self, frame: Frame, is_streaming:bool) {
+        if self.priority.load(Ordering::SeqCst) {
+            return;
+        }
         let now = Instant::now();
-        if now.duration_since(self.time) >= Duration::from_millis(30){
+        if now.duration_since(self.time) >= Duration::from_millis(60){
             if is_streaming{
                 let serialized_frame = match bincode::serialize(&frame) {
                     Ok(data) => data,
@@ -144,23 +149,25 @@ impl StreamServer {
 
     // Disconnect all clients
     pub fn disconnect(&self) {
-        let mut sockets = self.runtime.block_on(self.sockets.lock());
-        let addr_list: Vec<SocketAddr> = sockets.keys().cloned().collect();
-    
-        // Iterate over each socket and perform shutdown synchronously
-        for addr in addr_list {
-            if let Some(socket) = sockets.remove(&addr) {
-                self.runtime.block_on(async {
+        self.priority.store(true, Ordering::SeqCst);
+        self.runtime.block_on(async {
+            let mut sockets = self.sockets.lock().await;
+            let addr_list: Vec<SocketAddr> = sockets.keys().cloned().collect();
+        
+            // Iterate over each socket and perform shutdown synchronously
+            for addr in addr_list {
+                if let Some(socket) = sockets.remove(&addr) {
                     let mut socket = socket.lock().await;
                     if let Err(e) = socket.shutdown().await {
                         eprintln!("Failed to close socket {}: {}", addr, e);
                     }
-                });
+                }
             }
-        }
+        });
     
         // Reset the client count
         self.client_count.store(0,Ordering::SeqCst);
+        self.priority.store(false, Ordering::SeqCst);
         println!("All clients disconnected and sockets closed");
     }
 

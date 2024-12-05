@@ -130,7 +130,7 @@ impl Caster {
             ui.columns(3, |columns| {
                 // Stream/Pause button with Ctrl+S shortcut in the first column
                 let stream_button_text = if self.is_streaming { "Pause (Ctrl + S)" } else { "Stream (Ctrl + S)" };
-                let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::YELLOW));
+                let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::BLUE));
                 if stream_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S))) {
                     self.is_streaming = !self.is_streaming;
                 }
