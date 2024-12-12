@@ -1,7 +1,7 @@
 use scrap::{Capturer, Display};
 use std::thread;
+use std::sync::mpsc;
 use std::time::Duration;
-use tokio::sync::watch;
 use serde::{Deserialize, Serialize};
 
 pub fn available_displays() -> Vec<String> {
@@ -41,7 +41,7 @@ pub struct Frame{
     pub height : u32
 }
 pub struct ScreenCapture {
-    pub rx: watch::Receiver<Frame>,
+    rx: mpsc::Receiver<Frame>,
 }
 
 #[derive(Clone)]
@@ -55,11 +55,7 @@ pub struct CropValues {
 impl ScreenCapture {
     // Constructor that initializes the capture thread and returns the receiver
     pub fn new(index: usize) -> Result<Self, String> {
-        let (tx, rx) = watch::channel(Frame {
-            data: vec![],
-            width: 0,
-            height: 0,
-        });
+        let (tx, rx): (mpsc::SyncSender<Frame>, mpsc::Receiver<Frame>) = mpsc::sync_channel(1);
 
         thread::spawn(move || {
             // Create a Capturer to capture the screen
@@ -81,10 +77,7 @@ impl ScreenCapture {
                             height,
                         };
 
-                        if tx.send(frame_data).is_err() {
-                            eprintln!("Receiver has been dropped, stopping capture.");
-                            break;
-                        }
+                        let _ = tx.try_send(frame_data);
                     }
                     Err(error) => {
                         if error.kind() != std::io::ErrorKind::WouldBlock {
@@ -103,12 +96,7 @@ impl ScreenCapture {
     }
 
     pub fn receive_frame(&mut self) -> Option<Frame> {
-        let frame = self.rx.borrow();
-        if !frame.data.is_empty() {
-            Some(frame.clone())
-        } else {
-            None
-        }
+        self.rx.try_recv().ok()
     }
 }
 
