@@ -1,31 +1,22 @@
 use eframe::egui;
-use crate::client::{DisconnectHandle,connect_to_server};
-use tokio::sync::mpsc;
-use tokio::runtime::Runtime;
-use std::sync::Arc;
+use crate::client::Client;
 use crate::screen::{Frame};
 
 pub struct Receiver {
     ip_address: String,
     connected: bool,
     error_message: Option<String>,
-    disconnect_handle: Option<DisconnectHandle>,
-    runtime: Arc<Runtime>,
-    frame_receiver: Option<mpsc::Receiver<Option<Frame>>>,
+    client: Client,
     current_frame: Option<Frame>,
 }
 
 impl Receiver {
     pub fn new() -> Self {
-        // Initialize a new Tokio runtime for async tasks
-        let runtime = Arc::new(Runtime::new().expect("Failed to create Tokio runtime"));
         Self {
             ip_address: String::new(),
             connected: false,
             error_message: None,
-            disconnect_handle: None,
-            runtime,
-            frame_receiver: None,
+            client: Client::new(),
             current_frame: None,
         }
     }
@@ -74,7 +65,7 @@ impl Receiver {
 
         // Display received frames if connected
         if self.connected {
-            if let Some(frame_rx) = &mut self.frame_receiver {
+            if let Some(frame_rx) = &mut self.client.receiver {
                 if let Ok(frame) = frame_rx.try_recv() {
                     match frame{
                         Some(frame) => {
@@ -129,18 +120,11 @@ impl Receiver {
         if !self.ip_address.is_empty() {
             println!("Connecting to {}", self.ip_address);
             let ip = self.ip_address.clone();
-            let runtime = Arc::clone(&self.runtime);
-
-            // Spawn a new async task to handle the connection
-            let result = runtime.block_on(async {
-                connect_to_server(&ip).await
-            });
+            let result = self.client.start(&ip);
 
             match result {
-                Ok((frame_rx, disconnect_handle)) => {
+                Ok(_) => {
                     self.connected = true;
-                    self.disconnect_handle = Some(disconnect_handle);
-                    self.frame_receiver = Some(frame_rx);
                     self.error_message = None;
                 }
                 Err(err) => {
@@ -151,10 +135,7 @@ impl Receiver {
     }
 
     fn handle_disconnect(&mut self) {
-        if let Some(handle) = self.disconnect_handle.take() {
-            self.runtime.block_on(handle.disconnect());
-            println!("Disconnected");
-        }
+        self.client.stop();
         self.connected = false;
         self.current_frame = None;
     }

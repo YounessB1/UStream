@@ -1,73 +1,67 @@
-use tokio::net::TcpStream;
-use tokio::io::{self,AsyncReadExt};
-use tokio::sync::{mpsc,watch};
-use std::net::SocketAddr;
+use std::io::{self, Read};
+use std::net::{TcpStream, SocketAddr};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::sync::atomic::{AtomicBool, Ordering};
 use bincode;
 use crate::screen::Frame;
-use tokio::time::{timeout, Duration};
 
-#[derive(Clone)]
-pub struct DisconnectHandle {
-    shutdown_tx: watch::Sender<bool>,
+pub struct Client {
+    pub receiver: Option<mpsc::Receiver<Option<Frame>>>,
+    shutdown_flag: Arc<Mutex<AtomicBool>>,
 }
 
-impl DisconnectHandle {
-    pub async fn disconnect(self) {
-        // Signal the background task to stop
-        let _ = self.shutdown_tx.send(true);
+impl Client {
+    pub fn new() -> Self {
+        Self {
+            receiver: None,
+            shutdown_flag: Arc::new(Mutex::new(AtomicBool::new(false))),
+        }
     }
-}
 
-// The function to connect to the server and start receiving frames
-pub async fn connect_to_server(
-    ip_address: &str,
-) -> Result<(mpsc::Receiver<Option<Frame>>, DisconnectHandle), String > {
-    let port = 9041;
-    let address_port = format!("{}:{}", ip_address, port);
+    pub fn start(&mut self, ip_address: &str) -> Result<(), String> {
+        self.shutdown_flag.lock().unwrap().store(false, Ordering::SeqCst);
+        let (tx, rx) = mpsc::channel::<Option<Frame>>();
+        let receiver = Some(rx);
+        
 
-    let addr: SocketAddr = address_port.parse().map_err(|_| {
-        format!("Invalid IP address format: {}", ip_address)
-    })?;
+        let address = format!("{}:9041", ip_address);
+        let addr: SocketAddr = address.parse().map_err(|_| format!("Invalid IP address: {}", ip_address))?;
+        let stream = TcpStream::connect(addr).map_err(|e| format!("Connection failed: {}", e))?;
+        println!("Successfully connected to {}", addr);
 
-    // Attempt to connect to the server
-    let mut stream = timeout(Duration::from_secs(10), TcpStream::connect(addr))
-        .await
-        .map_err(|_| format!("Connection to {}:{} timed out", ip_address, port))?
-        .map_err(|_| format!("Connection to {}:{} failed", ip_address, port))?;
+        let thread_shutdown_flag = Arc::clone(&self.shutdown_flag);
+        thread::spawn(move || {
+            Self::receive_data(stream, tx, thread_shutdown_flag) 
+        });
 
-    println!("Successfully connected to {}", addr);
+        self.receiver = receiver;
+        Ok(())
+    }
 
-    // Create an MPSC channel to send frames from the receiver task
-    let (frame_tx, frame_rx) = mpsc::channel(10);
-
-    // Create a watch channel for shutdown signaling
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-    // Spawn a task to handle receiving data from the server
-    tokio::spawn(async move {
+    fn receive_data(mut stream: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>){
         loop {
             // Check for shutdown signal
-            if *shutdown_rx.borrow() {
+            if shutdown_flag.lock().unwrap().load(Ordering::SeqCst) {
+                println!("Shutting down the client...");
                 break;
             }
 
             let mut size_buffer = [0u8; 4];
-            match stream.read_exact(&mut size_buffer).await {
+            match stream.read_exact(&mut size_buffer) {
                 Ok(_) => {
                     let frame_size = u32::from_be_bytes(size_buffer) as usize;
                     if frame_size == 0 {
                         continue;
                     }
 
-                    // Step 2: Read the frame data
                     let mut frame_buffer = vec![0u8; frame_size];
-                    match stream.read_exact(&mut frame_buffer).await {
+                    match stream.read_exact(&mut frame_buffer) {
                         Ok(_) => {
                             match bincode::deserialize::<Frame>(&frame_buffer) {
                                 Ok(frame) => {
-                                    // Step 4: Send the frame to the main application via the channel
-                                    if frame_tx.send(Some(frame)).await.is_err() {
-                                        // If the receiver side is closed, stop the loop
+                                    if tx.send(Some(frame)).is_err() {
+                                        println!("Receiver disconnected");
                                         break;
                                     }
                                 }
@@ -78,13 +72,10 @@ pub async fn connect_to_server(
                             }
                         }
                         Err(e) => {
-                            eprintln!("Failed to read frame data: {}", e);
-                            // Handle EOF or other read errors
+                            eprintln!("Error reading frame data: {}", e);
                             if e.kind() == io::ErrorKind::UnexpectedEof {
-                                println!("Connection closed by server.");
-                                if let Err(_e) = frame_tx.send(None).await {
-                                    eprintln!("Failed to notify receiver about connection closure");
-                                }
+                                println!("Connection closed by the server.");
+                                let _ = tx.send(None);
                             }
                             break;
                         }
@@ -92,28 +83,18 @@ pub async fn connect_to_server(
                 }
                 Err(e) => {
                     eprintln!("Failed to read frame size: {}", e);
-                    // Handle EOF or other read errors
                     if e.kind() == io::ErrorKind::UnexpectedEof {
-                        println!("Connection closed by server.");
-                        if let Err(_e) = frame_tx.send(None).await {
-                            eprintln!("Failed to notify receiver about connection closure");
-                        }
+                        println!("Connection closed by the server.");
+                        let _ = tx.send(None);
                     }
                     break;
                 }
             }
         }
-        if let Ok(stream_std) = stream.into_std() {
-            use std::net::Shutdown;
-            if let Err(e) = stream_std.shutdown(Shutdown::Both) {
-                eprintln!("Error shutting down the connection: {}", e);
-            }
-            drop(stream_std);
-        }
-        println!("Receiver task exiting.");
-    });
+    }
 
-    // Return the frame receiver and disconnect handle to the caller
-    let disconnect_handle = DisconnectHandle { shutdown_tx };
-    Ok((frame_rx, disconnect_handle))
+    pub fn stop(&self) {
+        // Set the shutdown flag to true to stop the receiving thread
+        self.shutdown_flag.lock().unwrap().store(true, Ordering::SeqCst);
+    }
 }

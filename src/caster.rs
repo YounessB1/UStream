@@ -1,10 +1,10 @@
 use eframe::egui;
 use crate::screen::{ScreenCapture, Frame, CropValues, crop, blank, available_displays};
-use crate:: server::StreamServer;
+use crate:: server::Server;
 pub struct Caster {
     displays: Vec<String>,
     capture: Option<ScreenCapture>, // Screen capture instance
-    server: StreamServer,
+    server: Server,
     current_frame: Option<Frame>, // Current frame data to display
     crop: CropValues,
     is_streaming : bool,
@@ -15,7 +15,7 @@ impl Caster {
     // Initialize the Caster with a new ScreenCapture instance
     pub fn new() -> Self {
         let capture = None;
-        let server = StreamServer::new();
+        let server = Server::new();
         let crop = CropValues::new(0.0, 0.0, 0.0, 0.0);
         let displays = available_displays();
         Self {
@@ -130,7 +130,7 @@ impl Caster {
             ui.columns(3, |columns| {
                 // Stream/Pause button with Ctrl+S shortcut in the first column
                 let stream_button_text = if self.is_streaming { "Pause (Ctrl + S)" } else { "Stream (Ctrl + S)" };
-                let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::BLUE));
+                let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::GREEN));
                 if stream_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S))) {
                     self.is_streaming = !self.is_streaming;
                 }
