@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::io::{self,BufReader, Read};
 use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -39,7 +39,8 @@ impl Client {
         Ok(())
     }
 
-    fn receive_data(mut stream: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>){
+    fn receive_data(s: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>){
+        let mut stream = BufReader::new(s);
         loop {
             // Check for shutdown signal
             if shutdown_flag.lock().unwrap().load(Ordering::SeqCst) {

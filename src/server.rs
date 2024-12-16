@@ -1,5 +1,5 @@
 use std::net::{TcpListener, TcpStream, SocketAddr}; 
-use std::io::{Write}; 
+use std::io::{BufWriter, Write}; 
 use std::sync::{Arc,Mutex,mpsc,atomic::{AtomicUsize,AtomicBool,Ordering}};
 use std::collections::{HashMap};
 use std::time::{Instant,Duration};
@@ -81,15 +81,23 @@ impl Server {
                 Ok(msg) => {
                     let mut sockets_lock = sockets.lock().unwrap();
                     let mut disconnected_clients = Vec::new();
-
-                    // Iterate through the connected sockets and send the message
+    
                     for (addr, socket) in sockets_lock.iter_mut() {
-                        if socket.write_all(&msg).is_err() {
-                            disconnected_clients.push(*addr);
+                        // Wrap the socket in a buffered writer
+                        let mut buffered_socket = BufWriter::new(socket);
+                        
+                        // Attempt to write the message
+                        if buffered_socket.write_all(&msg).is_err() {
+                            disconnected_clients.push(*addr); // Mark client as disconnected
+                        }
+                        
+                        // Flush to ensure all data is sent
+                        if buffered_socket.flush().is_err() {
+                            disconnected_clients.push(*addr); // Handle failed flush
                         }
                     }
-
-                    // Remove disconnected clients and update client count
+    
+                    // Remove disconnected clients
                     for addr in disconnected_clients {
                         sockets_lock.remove(&addr);
                         client_count.fetch_sub(1, Ordering::SeqCst);
