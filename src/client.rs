@@ -3,8 +3,10 @@ use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::sync::atomic::{AtomicBool, Ordering};
-use bincode;
+//use bincode;
 use crate::screen::Frame;
+use image::io::Reader as ImageReader;
+use std::io::Cursor;
 
 pub struct Client {
     pub receiver: Option<mpsc::Receiver<Option<Frame>>>,
@@ -42,7 +44,6 @@ impl Client {
     fn receive_data(s: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>){
         let mut stream = BufReader::new(s);
         loop {
-            // Check for shutdown signal
             if shutdown_flag.lock().unwrap().load(Ordering::SeqCst) {
                 println!("Shutting down the client...");
                 break;
@@ -56,38 +57,43 @@ impl Client {
                         continue;
                     }
 
-                    let mut frame_buffer = vec![0u8; frame_size];
-                    match stream.read_exact(&mut frame_buffer) {
+                    let mut jpeg_data = vec![0u8; frame_size];
+                    match stream.read_exact(&mut jpeg_data) {
                         Ok(_) => {
-                            match bincode::deserialize::<Frame>(&frame_buffer) {
-                                Ok(frame) => {
-                                    if tx.send(Some(frame)).is_err() {
-                                        println!("Receiver disconnected");
+                            // Decodifica i dati JPEG
+                            let cursor = Cursor::new(jpeg_data);
+                            match ImageReader::new(cursor).with_guessed_format() {
+                                Ok(reader) => match reader.decode() {
+                                    Ok(image) => {
+                                        let frame = Frame {
+                                            width: image.width(),
+                                            height: image.height(),
+                                            data: image.to_rgba8().to_vec(),
+                                        };
+                                        if tx.send(Some(frame)).is_err() {
+                                            println!("Receiver disconnected");
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Failed to decode JPEG: {}", e);
                                         break;
                                     }
-                                }
+                                },
                                 Err(e) => {
-                                    eprintln!("Failed to deserialize frame: {}", e);
+                                    eprintln!("Failed to create image reader: {}", e);
                                     break;
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("Error reading frame data: {}", e);
-                            if e.kind() == io::ErrorKind::UnexpectedEof {
-                                println!("Connection closed by the server.");
-                                let _ = tx.send(None);
-                            }
+                            eprintln!("Error reading JPEG data: {}", e);
                             break;
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!("Failed to read frame size: {}", e);
-                    if e.kind() == io::ErrorKind::UnexpectedEof {
-                        println!("Connection closed by the server.");
-                        let _ = tx.send(None);
-                    }
                     break;
                 }
             }

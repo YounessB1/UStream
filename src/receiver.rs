@@ -1,6 +1,7 @@
 use eframe::egui;
 use crate::client::Client;
 use crate::screen::{Frame};
+use image;
 
 pub struct Receiver {
     ip_address: String,
@@ -69,7 +70,16 @@ impl Receiver {
                 if let Ok(frame) = frame_rx.try_recv() {
                     match frame{
                         Some(frame) => {
-                            self.current_frame = Some(frame.clone());
+                            if let Ok(decoded_image) = image::load_from_memory(&frame.data) {
+                                let rgba_image = decoded_image.to_rgba8();
+                                self.current_frame = Some(Frame {
+                                    data: rgba_image.into_raw(),
+                                    width: decoded_image.width(),
+                                    height: decoded_image.height(),
+                                });
+                            } else {
+                                eprintln!("Errore nella decodifica del frame JPEG");
+                            }
                         }
                         None => {
                             println!("Connection closed by server, stopping receiver.");

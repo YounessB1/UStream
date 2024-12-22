@@ -2,7 +2,11 @@ use scrap::{Capturer, Display};
 use std::thread;
 use std::sync::mpsc;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
+//use serde::{Deserialize, Serialize};
+use image::codecs::jpeg::JpegEncoder;
+use image::{ColorType};
+use std::io::Cursor;
+
 
 pub fn available_displays() -> Vec<String> {
     let displays: Vec<String> = Display::all()
@@ -13,10 +17,10 @@ pub fn available_displays() -> Vec<String> {
     displays
 }
 
-fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
+pub fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
     let h = height as usize;
     let w = width as usize;
-    let stride = frame.len() / h; 
+    let stride = frame.len() / h;
     let mut rgba_data = Vec::with_capacity((width * height * 4) as usize);
 
     for y in 0..h {
@@ -30,11 +34,23 @@ fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
             ]);
         }
     }
-
     rgba_data
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+pub fn encode_to_jpeg(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
+    // Creare un buffer di output
+    let mut jpeg_data = Vec::new();
+    {
+        // Encoder JPEG
+        let mut encoder = JpegEncoder::new(&mut jpeg_data);
+        encoder
+            .encode(frame, width, height, ColorType::Rgba8)
+            .expect("Failed to encode frame to JPEG");
+    }
+    jpeg_data
+}
+
+#[derive(Clone)]
 pub struct Frame{
     pub data: Vec<u8>,
     pub width: u32,
@@ -71,8 +87,10 @@ impl ScreenCapture {
                 match capturer.frame() {
                     Ok(frame) => {
                         let rgba_frame = convert_bgra_to_rgba(&frame, width, height);
+                        let jpeg_frame = encode_to_jpeg(&rgba_frame, width, height);
+                        
                         let frame_data = Frame {
-                            data: rgba_frame.to_vec(),
+                            data: jpeg_frame,
                             width,
                             height,
                         };

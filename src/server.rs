@@ -4,8 +4,10 @@ use std::sync::{Arc,Mutex,mpsc,atomic::{AtomicUsize,AtomicBool,Ordering}};
 use std::collections::{HashMap};
 use std::time::{Instant,Duration};
 use bytes::{Bytes};
+use image::codecs::jpeg::JpegEncoder;
+use image::{buffer, ImageBuffer};
 use std::thread;
-use bincode;
+//use bincode;
 use crate::screen::Frame;
 
 
@@ -15,13 +17,14 @@ pub struct Server {
     client_count: Arc<AtomicUsize>,                      // Number of connected clients
     time: Instant,                                      // Timing information
     priority: AtomicBool,                              // Priority flag
-    sender_tx: mpsc::Sender<Bytes>, 
+    sender_tx: mpsc::Sender<Bytes>,                     //canale di invio
 }
 
+// ffmpeg, gstream 
 impl Server {
     pub fn new() -> Self {
-        let sockets = Arc::new(Mutex::new(HashMap::new()));
-        let client_count = Arc::new(AtomicUsize::new(0));
+        let sockets = Arc::new(Mutex::new(HashMap::new())); //Mappa che associa un indirizzo a un flusso TCP. Essa è protetta da un mutex per consentire l'accesso concorrente e viene avvolta in un Arc per la condivisione sicura tra thread.
+        let client_count = Arc::new(AtomicUsize::new(0));   //contatore atomico
         let (sender_tx, sender_rx) = mpsc::channel::<Bytes>();
 
         let server = Self {
@@ -35,14 +38,14 @@ impl Server {
         let client_count_clone = Arc::clone(&client_count);
         
         thread::spawn(move || {
-            Self::broadcast_thread(sender_rx, sockets_clone, client_count_clone);
+            Self::broadcast_thread(sender_rx, sockets_clone, client_count_clone);   //gestisce la trasmissione dei dati ricevuti attraverso il canale
         });
 
         let sockets_clone = Arc::clone(&sockets);
         let client_count_clone = Arc::clone(&client_count);
 
         thread::spawn(move || {
-            let listener = match TcpListener::bind("0.0.0.0:9041") {
+            let listener = match TcpListener::bind("0.0.0.0:9041") {    //gestisce le connessioni in arrivo
                 Ok(listener) => listener,
                 Err(_) => {
                     return;
@@ -114,26 +117,36 @@ impl Server {
 
     fn construct_message(frame: &Frame, is_streaming: bool) -> Option<Bytes> {
         if is_streaming {
-            // Serialize the frame to bytes
-            let serialized_frame = match bincode::serialize(&frame) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Failed to serialize frame: {}", e);
+            // Supponendo che il frame sia un buffer RGBA o similare
+            let width = frame.width; // Aggiungi width e height alla struttura Frame
+            let height = frame.height;
+            let raw_data = &frame.data; // Contiene i dati grezzi
+    
+            // Crea un buffer di immagine da raw_data
+            let buffer: ImageBuffer<image::Rgba<u8>, Vec<u8>>  = match ImageBuffer::from_raw(width, height, raw_data.clone()) {
+                Some(buffer) => buffer,
+                None => {
+                    eprintln!("Failed to create image buffer");
                     return None;
                 }
             };
     
-            // Frame size (4 bytes)
-            let frame_size = (serialized_frame.len() as u32).to_be_bytes();
-            
-            // Prepare the buffer with size + serialized data
-            let mut buffer = Vec::with_capacity(4 + serialized_frame.len());
-            buffer.extend_from_slice(&frame_size);      // Frame size
-            buffer.extend_from_slice(&serialized_frame); // Serialized data
-            
+            // Codifica il buffer in JPEG
+            let mut jpeg_data = Vec::new();
+            let mut encoder = JpegEncoder::new(&mut jpeg_data);
+            if encoder.encode_image(&buffer).is_err() {
+                eprintln!("Failed to encode frame as JPEG");
+                return None;
+            }
+    
+            // Prepara il messaggio con la dimensione del frame + dati JPEG
+            let frame_size = (jpeg_data.len() as u32).to_be_bytes();
+            let mut buffer = Vec::with_capacity(4 + jpeg_data.len());
+            buffer.extend_from_slice(&frame_size); // Aggiungi dimensione frame
+            buffer.extend_from_slice(&jpeg_data);  // Aggiungi dati JPEG
+    
             Some(Bytes::from(buffer))
         } else {
-            // If not streaming, just send a size prefix of 0
             let frame_size = (0 as u32).to_be_bytes();
             let buffer = vec![frame_size[0], frame_size[1], frame_size[2], frame_size[3]];
             Some(Bytes::from(buffer))

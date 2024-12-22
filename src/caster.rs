@@ -1,6 +1,8 @@
 use eframe::egui;
-use crate::screen::{ScreenCapture, Frame, CropValues, crop, blank, available_displays};
+use crate::screen::{ScreenCapture, Frame, CropValues, crop, blank, available_displays, convert_bgra_to_rgba, encode_to_jpeg};
 use crate:: server::Server;
+use image;
+
 pub struct Caster {
     displays: Vec<String>,
     capture: Option<ScreenCapture>, // Screen capture instance
@@ -36,10 +38,21 @@ impl Caster {
         // Try to receive a frame from the capture thread
         if let Some(capture) = &mut self.capture {
             if let Some(frame) = capture.receive_frame() {
+                
                 self.current_frame = Some(frame.clone());
-                crop(&mut self.current_frame.as_mut().unwrap(), self.crop.clone());
-                blank(&mut self.current_frame.as_mut().unwrap(), self.is_blank);
-                self.server.broadcast_frame(self.current_frame.clone().unwrap(), self.is_streaming);
+                let mut jpeg_data = Vec::new(); // Buffer per i dati JPEG
+                let mut encoder = image::codecs::jpeg::JpegEncoder::new(&mut jpeg_data);
+                
+                if encoder.encode(&frame.data, frame.width, frame.height, image::ColorType::Rgba8).is_ok() {
+                    let jpeg_frame = Frame {
+                        data: jpeg_data,
+                        width: frame.width,
+                        height: frame.height,
+                    };
+                    self.server.broadcast_frame(jpeg_frame, self.is_streaming);
+                } else {
+                    eprintln!("Errore nella codifica JPEG del frame");
+                }
             }
         }
         // display possible screens to capture
@@ -106,14 +119,14 @@ impl Caster {
 
             // Determine available space and aspect ratio
             let mut available_size = ui.available_size();
-            available_size.x -= 10.0;
-            available_size.y -= 100.0;
+            available_size.x -= 10.0;   //larghezza
+            available_size.y -= 100.0;  //altezza
             let aspect_ratio = width as f32 / height as f32;
 
             // Calculate the target size to fit the frame within available space
-            let target_size = if available_size.x / available_size.y > aspect_ratio {
+            let target_size = if available_size.x / available_size.y > aspect_ratio {   //spazio più largo di quello disponibile
                 egui::vec2(available_size.y * aspect_ratio, available_size.y)
-            } else {
+            } else {    //spazio più alto di quello disponibile
                 egui::vec2(available_size.x, available_size.x / aspect_ratio)
             };
 
@@ -132,20 +145,20 @@ impl Caster {
                 let stream_button_text = if self.is_streaming { "Pause (Ctrl + S)" } else { "Stream (Ctrl + S)" };
                 let stream_button = columns[0].add(egui::Button::new(stream_button_text).fill(egui::Color32::GREEN));
                 if stream_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::S))) {
-                    self.is_streaming = !self.is_streaming;
+                    self.is_streaming = !self.is_streaming; //flag invertito
                 }
     
                 // Blank/Stop Blank button with Ctrl+B shortcut in the second column
                 let blank_button_text = if self.is_blank { "Stop Blank (Ctrl + B)" } else { "Blank (Ctrl + B)" };
                 let blank_button = columns[1].button(blank_button_text);
                 if blank_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::B))) {
-                    self.is_blank = !self.is_blank;
+                    self.is_blank = !self.is_blank; //flag invertito
                 }
     
                 // Disconnect button with Ctrl+D shortcut in the third column
                 let disconnect_button = columns[2].add(egui::Button::new("Disconnect (Ctrl + D)").fill(egui::Color32::RED));
                 if disconnect_button.clicked() || (ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::D))) {
-                    self.is_streaming = false;
+                    self.is_streaming = false;  
                     self.server.disconnect();
                 }
             });
