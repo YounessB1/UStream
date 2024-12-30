@@ -8,7 +8,8 @@ use std::thread;
 use bincode;
 use crate::screen::Frame;
 
-
+//Il server riceve i frames dal caster e li trasmette ai ricevers
+//che poi deserializzano i frames, li decomprimono e li fanno vedere ai clients
 // Define a struct to manage the server state
 pub struct Server {
     sockets: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>,  // Shared map of sockets
@@ -21,6 +22,9 @@ pub struct Server {
 impl Server {
     pub fn new() -> Self {
         let sockets = Arc::new(Mutex::new(HashMap::new()));
+        //socket è un Mutex e solo un thread alla volta può prenderlo,
+        //voglio che se un thread si disconnette, la priorità deve passare 
+        //al disconnect e non posso piu' mandare messaggi sul canale
         let client_count = Arc::new(AtomicUsize::new(0));
         let (sender_tx, sender_rx) = mpsc::channel::<Bytes>();
 
@@ -34,6 +38,10 @@ impl Server {
         let sockets_clone = Arc::clone(&sockets);
         let client_count_clone = Arc::clone(&client_count);
         
+        //Nel caso specifico, la funzione broadcast_thread può continuare a leggere messaggi dal canale sender_rx e a inviarli ai client 
+        //attraverso i socket presenti nella mappa sockets_clone.
+        //Allo stesso tempo, il server principale può continuare a gestire le connessioni, aggiornare il numero di client.
+        //Il thread principale può continuare ad accettare nuove connessioni da client.
         thread::spawn(move || {
             Self::broadcast_thread(sender_rx, sockets_clone, client_count_clone);
         });
@@ -41,6 +49,14 @@ impl Server {
         let sockets_clone = Arc::clone(&sockets);
         let client_count_clone = Arc::clone(&client_count);
 
+        //Riassunto di questo secondo thread secondario:
+        //Avvia un server TCP che ascolta sulla porta 9041 per connessioni in ingresso.
+        /*Ogni volta che un client si connette, il server:
+        Ottiene l'indirizzo del client.
+        Clona il socket del client.
+        Inserisce il socket nella mappa condivisa sockets.
+        Incrementa il contatore di client connessi (client_count).
+        Se c'è un errore (ad esempio, se un client non riesce a connettersi), stampa un errore.*/
         thread::spawn(move || {
             let listener = match TcpListener::bind("0.0.0.0:9041") {
                 Ok(listener) => listener,
@@ -51,9 +67,11 @@ impl Server {
             println!("Server started on port 9041");
 
             for stream in listener.incoming() {
+                //Ogni volta che un client si connette al server, 
+                //viene restituito un oggetto stream, che rappresenta la connessione TCP.
                 match stream {
                     Ok(socket) => {
-                        let addr = socket.peer_addr().unwrap();
+                        let addr = socket.peer_addr().unwrap(); //Quando un client si connette con successo, il server ottiene l'indirizzo del client con socket.peer_addr().unwrap()
                         println!("Client connected: {}", addr);
 
                         let sockets = Arc::clone(&sockets_clone);
@@ -64,6 +82,9 @@ impl Server {
                             sockets_guard.insert(addr, socket.try_clone().expect("Failed to clone socket"));
                         }
                         client_count.fetch_add(1, Ordering::SeqCst);
+                        /*Ordering::SeqCst sta per "Sequentially Consistent" (Consistenza Sequenziale).
+                        È l'ordinamento più forte disponibile, garantendo che tutte le operazioni atomiche siano visibili in modo coerente tra tutti i thread
+                        come se fossero eseguite in un ordine sequenziale che rispetta l'ordine in cui sono chiamate nel programma.*/
                     }
                     Err(e) => {
                         eprintln!("Connection failed: {}", e);
@@ -75,8 +96,12 @@ impl Server {
         server
     }
 
+    //e' la funzione chiamata sopra e gestita del thread secondario
+    //fa un loop infinito in cui se il recevier riceve frame, lo inoltra attraverso un ciclo for a tutti i client presenti in sockets_lock
+    //se la ricezione non va a buon fine, quel client con indirizzo addr e' diaconnesso
+    //quindi lo inserisco nel vettore 'disconnected_clients' e alla fine rimuovo i clients che si trovano in questo vettore
     fn broadcast_thread(receiver: mpsc::Receiver<Bytes>, sockets: Arc<Mutex<HashMap<SocketAddr, TcpStream>>>, client_count: Arc<AtomicUsize>){
-        loop{
+        loop{ //loop infinito
             match receiver.recv() {
                 Ok(msg) => {
                     let mut sockets_lock = sockets.lock().unwrap();

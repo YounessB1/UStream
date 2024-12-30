@@ -34,6 +34,7 @@ impl Caster {
         ui.heading("Caster Mode");
         ui.add_space(20.0);
         // Try to receive a frame from the capture thread
+        //Se riceve il frame, lo croppa e lo blanka
         if let Some(capture) = &mut self.capture {
             if let Some(frame) = capture.receive_frame() {
                 self.current_frame = Some(frame.clone());
@@ -102,6 +103,7 @@ impl Caster {
                 [width, height],
                 &frame.data,
             );
+            //Fa il loading dell'immagine e ti fa vedere lo schermo
             let image_handle = ctx.load_texture("screen_frame", texture, Default::default());
 
             // Determine available space and aspect ratio

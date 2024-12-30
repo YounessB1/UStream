@@ -4,6 +4,8 @@ use std::sync::mpsc;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
+//dico a questa funzione quali sono i monitor
+//e' quella che stampa quanti monitor sono connessi (usata in Caster)
 pub fn available_displays() -> Vec<String> {
     let displays: Vec<String> = Display::all()
         .iter()
@@ -13,6 +15,8 @@ pub fn available_displays() -> Vec<String> {
     displays
 }
 
+//formato dell'immagine
+//struttura dati chiave e' frame con u8 che sono i pixel e poi ho larghezza e lunghezza dell'immagine
 fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
     let h = height as usize;
     let w = width as usize;
@@ -40,6 +44,7 @@ pub struct Frame{
     pub width: u32,
     pub height : u32
 }
+
 pub struct ScreenCapture {
     rx: mpsc::Receiver<Frame>,
 }
@@ -155,3 +160,11 @@ pub fn blank(frame: &mut Frame, is_blank: bool) {
         }
     }
 }
+/*[dependencies]
+eframe = "0.28" //libreria per interfaccia grafica
+egui = "0.24"   //libreria per interfaccia grafica
+scrap = "0.5.0" //libreria per l'accesso agli screenshot del desktop o per catturare contenuti dello schermo
+bytes = "1.4" //crea il byte che va lungo il canale TCP
+serde = { version = "1.0", features = ["derive"] }
+// serde libreria che serve a serializzare/deserializzare un oggetto Rust in un oggetto formato JSON
+bincode = "1.3" //Serializza/Deserializza le strutture dati Rust in flussi binari compatti*/

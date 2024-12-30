@@ -19,6 +19,7 @@ impl Client {
         }
     }
 
+    //La funzione start può essere utilizzata per avviare la connessione a un server, passandogli l'indirizzo IP del server.
     pub fn start(&mut self, ip_address: &str) -> Result<(), String> {
         self.shutdown_flag.lock().unwrap().store(false, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel::<Option<Frame>>();
@@ -27,10 +28,13 @@ impl Client {
 
         let address = format!("{}:9041", ip_address);
         let addr: SocketAddr = address.parse().map_err(|_| format!("Invalid IP address: {}", ip_address))?;
+        //Una connessione TCP viene stabilita utilizzando TcpStream::connect
         let stream = TcpStream::connect(addr).map_err(|e| format!("Connection failed: {}", e))?;
         println!("Successfully connected to {}", addr);
 
         let thread_shutdown_flag = Arc::clone(&self.shutdown_flag);
+
+        //Un thread separato si occupa di ricevere i dati dalla connessione TCP
         thread::spawn(move || {
             Self::receive_data(stream, tx, thread_shutdown_flag) 
         });
