@@ -2,6 +2,8 @@ use scrap::{Capturer, Display};
 use std::thread;
 use std::sync::mpsc;
 use std::time::Duration;
+use image::{ImageBuffer, Rgba, RgbaImage, DynamicImage, ImageOutputFormat};
+use std::io::Cursor;
 use serde::{Deserialize, Serialize};
 
 //dico a questa funzione quali sono i monitor
@@ -34,9 +36,9 @@ fn convert_bgra_to_rgba(frame: &[u8], width: u32, height: u32) -> Vec<u8> {
             ]);
         }
     }
-
     rgba_data
 }
+
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Frame{
@@ -57,6 +59,13 @@ pub struct CropValues {
     pub bottom: f32,
 }
 
+impl Frame {
+    pub fn to_image_buffer(&self) -> ImageBuffer<Rgba<u8>, Vec<u8>> {
+        ImageBuffer::from_raw(self.width, self.height, self.data.clone())
+            .expect("Failed to create ImageBuffer from Frame data")
+    }
+}
+
 impl ScreenCapture {
     // Constructor that initializes the capture thread and returns the receiver
     pub fn new(index: usize) -> Result<Self, String> {
@@ -75,9 +84,9 @@ impl ScreenCapture {
             loop {
                 match capturer.frame() {
                     Ok(frame) => {
-                        let rgba_frame = convert_bgra_to_rgba(&frame, width, height);
+                        let jpeg_frame = convert_bgra_to_rgba(&frame, width, height);
                         let frame_data = Frame {
-                            data: rgba_frame.to_vec(),
+                            data: jpeg_frame,
                             width,
                             height,
                         };

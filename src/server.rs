@@ -6,6 +6,8 @@ use std::time::{Instant,Duration};
 use bytes::{Bytes};
 use std::thread;
 use bincode;
+use image::{DynamicImage, ImageOutputFormat};
+use std::io::Cursor;
 use crate::screen::Frame;
 
 //Il server riceve i frames dal caster e li trasmette ai ricevers
@@ -131,26 +133,27 @@ impl Server {
 
     fn construct_message(frame: &Frame, is_streaming: bool) -> Option<Bytes> {
         if is_streaming {
-            // Serialize the frame to bytes
-            let serialized_frame = match bincode::serialize(&frame) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("Failed to serialize frame: {}", e);
-                    return None;
-                }
-            };
+            // Converti il frame in DynamicImage (potrebbe dipendere dal tuo tipo di Frame)
+            let image = DynamicImage::ImageRgba8(frame.to_image_buffer());  // Questa parte dipende da come rappresenti il frame
     
-            // Frame size (4 bytes)
-            let frame_size = (serialized_frame.len() as u32).to_be_bytes();
-            
-            // Prepare the buffer with size + serialized data
-            let mut buffer = Vec::with_capacity(4 + serialized_frame.len());
-            buffer.extend_from_slice(&frame_size);      // Frame size
-            buffer.extend_from_slice(&serialized_frame); // Serialized data
-            
-            Some(Bytes::from(buffer))
+            // Comprimilo in formato JPG
+            let mut buffer = Vec::new();
+            if let Err(e) = image.write_to(&mut Cursor::new(&mut buffer), ImageOutputFormat::Jpeg(75)) {
+                eprintln!("Failed to compress image: {}", e);
+                return None;
+            }
+    
+            // Dimensione del frame (4 byte) con i dati compressi
+            let frame_size = (buffer.len() as u32).to_be_bytes();
+    
+            // Prepara il buffer con dimensione + dati compressi
+            let mut full_buffer = Vec::with_capacity(4 + buffer.len());
+            full_buffer.extend_from_slice(&frame_size); // Dimensione del frame
+            full_buffer.extend_from_slice(&buffer);     // Dati compressi
+    
+            Some(Bytes::from(full_buffer))
         } else {
-            // If not streaming, just send a size prefix of 0
+            // Se non in streaming, manda solo prefisso di dimensione 0
             let frame_size = (0 as u32).to_be_bytes();
             let buffer = vec![frame_size[0], frame_size[1], frame_size[2], frame_size[3]];
             Some(Bytes::from(buffer))

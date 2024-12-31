@@ -1,4 +1,5 @@
-use std::io::{self, Read};
+use image::{DynamicImage, ImageBuffer, ImageFormat, io::Reader as ImageReader};
+use std::io::{self, BufReader, Cursor, Read};
 use std::net::{TcpStream, SocketAddr};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -43,9 +44,9 @@ impl Client {
         Ok(())
     }
 
-    fn receive_data(mut stream: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>){
+    fn receive_data(s: TcpStream, tx: mpsc::Sender<Option<Frame>>, shutdown_flag: Arc<Mutex<AtomicBool>>) {
+        let mut stream = BufReader::new(s);
         loop {
-            // Check for shutdown signal
             if shutdown_flag.lock().unwrap().load(Ordering::SeqCst) {
                 println!("Shutting down the client...");
                 break;
@@ -62,15 +63,16 @@ impl Client {
                     let mut frame_buffer = vec![0u8; frame_size];
                     match stream.read_exact(&mut frame_buffer) {
                         Ok(_) => {
-                            match bincode::deserialize::<Frame>(&frame_buffer) {
-                                Ok(frame) => {
+                            // A questo punto, i dati ricevuti sono compressi in JPG. Ora li decomprimiamo.
+                            match Self::decompress_frame(&frame_buffer) {
+                                Some(frame) => {
                                     if tx.send(Some(frame)).is_err() {
                                         println!("Receiver disconnected");
                                         break;
                                     }
                                 }
-                                Err(e) => {
-                                    eprintln!("Failed to deserialize frame: {}", e);
+                                None => {
+                                    eprintln!("Failed to decompress or deserialize frame");
                                     break;
                                 }
                             }
@@ -97,6 +99,31 @@ impl Client {
         }
     }
 
+
+    // Funzione per decomprimere JPG e convertire in Frame
+    fn decompress_frame(frame_buffer: &[u8]) -> Option<Frame> {
+        // Usa la libreria image per leggere i dati JPG
+        let cursor = Cursor::new(frame_buffer);
+        match ImageReader::with_format(cursor, ImageFormat::Jpeg).decode() {
+            Ok(image) => {
+                // Convertiamo l'immagine in formato RGBA8
+                let rgba_image = image.to_rgba8();
+                let width = rgba_image.width();
+                let height = rgba_image.height();
+                let data = rgba_image.into_raw(); // Otteniamo i pixel in formato RGBA
+
+                Some(Frame {
+                    data,
+                    width,
+                    height,
+                })
+            }
+            Err(e) => {
+                eprintln!("Failed to decode JPG image: {}", e);
+                None
+            }
+        }
+    }
     pub fn stop(&self) {
         // Set the shutdown flag to true to stop the receiving thread
         self.shutdown_flag.lock().unwrap().store(true, Ordering::SeqCst);
